@@ -111,7 +111,7 @@ async function main() {
 
     // Calculate funding requirements and check balance immediately
     const PAS = 1_000_000_000_000n; // 1 PAS = 10^12 planck
-    const amountPerAccount = PAS / 2n; // 0.5 PAS per account for initial funding
+    const amountPerAccount = PAS; // 1 PAS per account for initial funding (covers stake + fees)
     const avgStakePerAccount = PAS / 2n; // Average ~0.5 PAS for staking (ranges from 0.25 to 1)
     const totalFundingAmount = amountPerAccount * BigInt(numNominators);
     const totalStakingAmount = avgStakePerAccount * BigInt(numNominators);
