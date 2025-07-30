@@ -331,13 +331,21 @@ async function main() {
 
             console.log(`      Selected validators: ${selectedValidators.length}`);
 
+            // Ensure we have validators to nominate
+            if (selectedValidators.length === 0) {
+              console.error(`   [${counter}] No validators selected for ${account.address}, skipping`);
+              continue;
+            }
+
             // Create bond and nominate transactions
             const bondTx = api.tx.Staking.bond({
               value: stakeAmount,
               payee: { type: "Staked" },
             });
 
-            const nominateTx = api.tx.Staking.nominate(selectedValidators);
+            // Convert SS58String[] to MultiAddress[] explicitly for nominate
+            const validatorTargets = selectedValidators.map(validator => MultiAddress.Id(validator));
+            const nominateTx = api.tx.Staking.nominate(validatorTargets);
 
             // Batch bond and nominate together
             const batchTx = api.tx.Utility.batch_all([bondTx, nominateTx]);
