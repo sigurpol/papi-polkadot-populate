@@ -463,27 +463,38 @@ async function main() {
         const reservedBalance = accountInfo.data.reserved;
         const totalBalance = freeBalance + reservedBalance;
 
-        // Get staking info
-        const bondedController = await api.query.Staking.Bonded.getValue(account.address);
-        const nominatorInfo = await api.query.Staking.Nominators.getValue(account.address);
-
-
         console.log(`\n🏛️  Nominator ${i}: ${account.address}`);
         console.log(
           `   💰 Balance: ${Number(totalBalance) / Number(PAS)} PAS (${Number(freeBalance) / Number(PAS)} free + ${Number(reservedBalance) / Number(PAS)} reserved)`
         );
 
-        if (bondedController) {
-          // Get ledger info to see actual staked amount
-          const ledgerInfo = await api.query.Staking.Ledger.getValue(bondedController);
-          if (ledgerInfo) {
-            const stakedAmount = ledgerInfo.active;
-            console.log(`   🥩 Staking: ${Number(stakedAmount) / Number(PAS)} PAS`);
-          } else {
-            console.log(`   🥩 Staking: Bonded but no ledger info found`);
-          }
+        // Try querying ledger directly on the account (stash)
+        const ledgerInfo = await api.query.Staking.Ledger.getValue(account.address);
+        const nominatorInfo = await api.query.Staking.Nominators.getValue(account.address);
+
+        if (ledgerInfo) {
+          const stakedAmount = ledgerInfo.active;
+          console.log(
+            `   🥩 Staking: ${Number(stakedAmount) / Number(PAS)} PAS (active: ${Number(ledgerInfo.active) / Number(PAS)}, total: ${Number(ledgerInfo.total) / Number(PAS)})`
+          );
         } else {
-          console.log(`   🥩 Staking: Not bonded`);
+          // Fallback: check if there's a separate controller
+          const bondedController = await api.query.Staking.Bonded.getValue(account.address);
+          if (bondedController && bondedController !== account.address) {
+            const controllerLedger = await api.query.Staking.Ledger.getValue(bondedController);
+            if (controllerLedger) {
+              const stakedAmount = controllerLedger.active;
+              console.log(
+                `   🥩 Staking: ${Number(stakedAmount) / Number(PAS)} PAS (via controller ${bondedController})`
+              );
+            } else {
+              console.log(
+                `   🥩 Staking: Bonded to controller ${bondedController} but no ledger found`
+              );
+            }
+          } else {
+            console.log(`   🥩 Staking: Not bonded`);
+          }
         }
 
         if (nominatorInfo) {
