@@ -12,12 +12,46 @@ To install dependencies:
 bun install
 ```
 
-## Run
+## Usage
 
-To run:
+The tool accepts the following command-line parameters:
+
+### Required Parameters
+
+- `--seed <string>` - The seed phrase or hex seed of the god account (the account that will fund all child accounts). Accepts:
+  - A valid 12-24 word mnemonic phrase
+  - A 32-byte hex string starting with `0x` (e.g., `0xf4b7d3a7f56d6e74c2b2230703be1a01ffe9c066143ff7f93d41e3d62b82327a`)
+  - The word `dev` for testing with the development seed
+
+### Optional Parameters
+
+- `--nominators <number>` - Number of nominator accounts to create (default: 100)
+- `--validators-per-nominator <number>` - Number of validators each nominator will select (default: 16)
+
+### Examples
+
+Using a mnemonic phrase:
 
 ```bash
-bun run index.ts
+bun run index.ts --seed "your twelve word mnemonic phrase goes here and should be valid"
+```
+
+Using a hex seed:
+
+```bash
+bun run index.ts --seed "0xf4b7d3a7f56d6e74c2b2230703be1a01ffe9c066143ff7f93d41e3d62b82327a"
+```
+
+Using dev seed for testing:
+
+```bash
+bun run index.ts --seed dev --nominators 5 --validators-per-nominator 10
+```
+
+Creating 50 nominators with 8 validators each:
+
+```bash
+bun run index.ts --seed "your seed phrase" --nominators 50 --validators-per-nominator 8
 ```
 
 ## Choose your network
@@ -38,7 +72,7 @@ bun papi add -n westend wnd
 and replace the following lines in `index.ts`:
 
 ```ts
-import { MultiAddress, paseo } from "@polkadot-api/descriptors";
+import { paseo } from "@polkadot-api/descriptors";
 import { chainSpec } from "polkadot-api/chains/paseo";
 ...
 // get the safely typed API
