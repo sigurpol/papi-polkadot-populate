@@ -1,17 +1,13 @@
 import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
-import {
-  entropyToMiniSecret,
-  mnemonicToEntropy,
-  DEV_PHRASE,
-} from "@polkadot-labs/hdkd-helpers";
+import { entropyToMiniSecret, mnemonicToEntropy, DEV_PHRASE } from "@polkadot-labs/hdkd-helpers";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { createClient } from "polkadot-api";
-import { MultiAddress, paseo } from "@polkadot-api/descriptors";
+import { paseo } from "@polkadot-api/descriptors";
 import { chainSpec } from "polkadot-api/chains/paseo";
 import { getSmProvider } from "polkadot-api/sm-provider";
 import { start } from "polkadot-api/smoldot";
 import { Command } from "commander";
-import { fromHex, toHex } from "@polkadot-api/utils";
+import { fromHex } from "@polkadot-api/utils";
 import { ss58Encode } from "@polkadot-labs/hdkd-helpers";
 
 // Set up CLI argument parsing
@@ -23,7 +19,11 @@ program
   .version("1.0.0")
   .requiredOption("--seed <string>", "God account seed phrase")
   .option("--nominators <number>", "Number of nominator accounts to create", "100")
-  .option("--validators-per-nominator <number>", "Number of validators each nominator selects", "16")
+  .option(
+    "--validators-per-nominator <number>",
+    "Number of validators each nominator selects",
+    "16"
+  )
   .parse(process.argv);
 
 const options = program.opts();
@@ -42,7 +42,7 @@ async function main() {
 
   // Create the god account signer
   let miniSecret: Uint8Array;
-  
+
   if (godSeed.toLowerCase() === "dev") {
     console.log("🔧 Using development phrase");
     miniSecret = entropyToMiniSecret(mnemonicToEntropy(DEV_PHRASE));
@@ -55,8 +55,10 @@ async function main() {
         throw new Error("Hex seed must be 32 bytes (64 hex characters)");
       }
       miniSecret = fromHex(godSeed);
-    } catch (e) {
-      console.error("❌ Error: Invalid hex seed. Must be 32 bytes (64 hex characters) starting with 0x");
+    } catch {
+      console.error(
+        "❌ Error: Invalid hex seed. Must be 32 bytes (64 hex characters) starting with 0x"
+      );
       console.error(`   Example: 0x${"f".repeat(64)}`);
       process.exit(1);
     }
@@ -64,7 +66,7 @@ async function main() {
     // Expect a valid mnemonic phrase
     try {
       miniSecret = entropyToMiniSecret(mnemonicToEntropy(godSeed));
-    } catch (e) {
+    } catch {
       console.error("❌ Error: Invalid seed format. Seed must be one of:");
       console.error("   - A valid 12-24 word mnemonic phrase");
       console.error("   - A 32-byte hex string starting with 0x");
@@ -72,14 +74,10 @@ async function main() {
       process.exit(1);
     }
   }
-  
+
   const derive = sr25519CreateDerive(miniSecret);
   const godKeyPair = derive("");
-  const godSigner = getPolkadotSigner(
-    godKeyPair.publicKey,
-    "Sr25519",
-    godKeyPair.sign,
-  );
+  const _godSigner = getPolkadotSigner(godKeyPair.publicKey, "Sr25519", godKeyPair.sign);
 
   // Create the client with smoldot
   const smoldot = start();
@@ -90,15 +88,17 @@ async function main() {
 
   try {
     console.log("✅ Connected to Paseo testnet");
-    
+
     // Get the god account address in SS58 format (Paseo uses prefix 0)
     const godAddress = ss58Encode(godKeyPair.publicKey, 0);
     console.log(`🔑 God account address: ${godAddress}`);
-    
+
     // Check god account balance
     const accountInfo = await api.query.System.Account.getValue(godAddress);
-    console.log(`💰 God account balance: ${accountInfo.data.free} (free), ${accountInfo.data.reserved} (reserved)`);
-    
+    console.log(
+      `💰 God account balance: ${accountInfo.data.free} (free), ${accountInfo.data.reserved} (reserved)`
+    );
+
     // Helper function to get account at index using hard derivation
     const getAccountAtIndex = (index: number) => {
       // Use hard derivation path: ///index
@@ -106,21 +106,16 @@ async function main() {
       return {
         keyPair: childKeyPair,
         address: ss58Encode(childKeyPair.publicKey, 0),
-        signer: getPolkadotSigner(
-          childKeyPair.publicKey,
-          "Sr25519",
-          childKeyPair.sign,
-        ),
+        signer: getPolkadotSigner(childKeyPair.publicKey, "Sr25519", childKeyPair.sign),
       };
     };
-    
+
     // Test account derivation
     console.log("\n📦 Testing account derivation:");
     for (let i = 1; i <= Math.min(3, numNominators); i++) {
       const account = getAccountAtIndex(i);
       console.log(`   Account #${i}: ${account.address}`);
     }
-
   } catch (error) {
     console.error("❌ Error:", error);
   } finally {
