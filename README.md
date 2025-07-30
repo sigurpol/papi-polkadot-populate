@@ -1,6 +1,8 @@
 # papi-polkadot-populate
 
-This tool aims to easily create a main account, fund it, derive several child accounts from it, fund them, and have all of them nominate. The stakes of these accounts are somewhat variable; when we take the election snapshot, some accounts are included while others are not.
+This tool aims to easily create several hard-derived child accounts from a funded account, fund them, and have all of them nominate.
+
+The stakes of these accounts are somewhat variable, so that when we take the election snapshot, some accounts are included while others are not.
 
 The project is inspired by https://github.com/shawntabrizi/polkadot-populate.
 
