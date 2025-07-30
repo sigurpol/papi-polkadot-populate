@@ -27,6 +27,7 @@ The tool accepts the following command-line parameters:
 
 - `--nominators <number>` - Number of nominator accounts to create (default: 100)
 - `--validators-per-nominator <number>` - Number of validators each nominator will select (default: 16)
+- `--dry-run` - Show what would happen without executing transactions (optional)
 
 ### Examples
 
@@ -52,6 +53,18 @@ Creating 50 nominators with 8 validators each:
 
 ```bash
 bun run index.ts --seed "your seed phrase" --nominators 50 --validators-per-nominator 8
+```
+
+Dry run mode (test without executing transactions):
+
+```bash
+bun run index.ts --seed dev --nominators 5 --dry-run
+```
+
+Execute real transactions (default behavior):
+
+```bash
+bun run index.ts --seed "your funded seed" --nominators 5
 ```
 
 ## Choose your network
