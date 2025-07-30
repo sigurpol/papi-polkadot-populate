@@ -38,7 +38,7 @@ async function main() {
 
   console.log("🚀 Starting PAPI Polkadot Populate");
   console.log(`📊 Configuration:`);
-  console.log(`   - God account seed: ${godSeed.substring(0, 10)}...`);
+  // console.log(`   - God account seed: ${godSeed.substring(0, 10)}...`);
   console.log(`   - Number of nominators: ${numNominators}`);
   console.log(`   - Validators per nominator: ${validatorsPerNominator}`);
   console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
@@ -186,25 +186,70 @@ async function main() {
           } else {
             console.log(`\n⚡ Executing batch of ${batch.length} transfers...`);
 
-            // Use utility.batch for multiple transfers
-            const batchTx = batch.length === 1 ? batch[0] : api.tx.Utility.batch({ calls: batch });
+            // Use utility.batch_all for multiple transfers (batch_all fails all if one fails)
+            const batchTx = batch.length === 1 ? batch[0] : api.tx.Utility.batch_all(batch);
 
-            // Sign and submit
+            // Sign and submit with timeout
             await new Promise((resolve, reject) => {
-              batchTx.signSubmitAndWatch(godSigner).subscribe({
+              let completed = false;
+              let subscription: { unsubscribe: () => void } | null = null;
+
+              const timeout = setTimeout(() => {
+                if (!completed) {
+                  completed = true;
+                  console.log(`   ⚠️ Transaction timeout, but may have succeeded`);
+                  if (subscription) {
+                    try {
+                      subscription.unsubscribe();
+                    } catch {}
+                  }
+                  resolve(null);
+                }
+              }, 30000); // 30 second timeout
+
+              subscription = batchTx.signSubmitAndWatch(godSigner).subscribe({
                 next: (event) => {
+                  console.log(`   📡 Event: ${event.type}`);
                   if (event.type === "txBestBlocksState") {
                     console.log(`   ✅ Batch included in block`);
                     console.log(`   🔗 https://paseo.subscan.io/extrinsic/${event.txHash}`);
+                    if (!completed) {
+                      completed = true;
+                      clearTimeout(timeout);
+                      if (subscription) {
+                        try {
+                          subscription.unsubscribe();
+                        } catch {}
+                      }
+                      resolve(null);
+                    }
                   }
                 },
                 error: (error) => {
-                  console.error(`   ❌ Batch failed:`, error);
-                  reject(error);
+                  if (!completed) {
+                    completed = true;
+                    clearTimeout(timeout);
+                    console.error(`   ❌ Batch failed:`, error);
+                    if (subscription) {
+                      try {
+                        subscription.unsubscribe();
+                      } catch {}
+                    }
+                    reject(error);
+                  }
                 },
                 complete() {
-                  console.log(`   ✅ Batch completed`);
-                  resolve(null);
+                  if (!completed) {
+                    completed = true;
+                    clearTimeout(timeout);
+                    console.log(`   ✅ Batch completed`);
+                    if (subscription) {
+                      try {
+                        subscription.unsubscribe();
+                      } catch {}
+                    }
+                    resolve(null);
+                  }
                 },
               });
             });
@@ -240,8 +285,14 @@ async function main() {
   } catch (error) {
     console.error("❌ Error:", error);
   } finally {
-    client.destroy();
-    smoldot.terminate();
+    // Clean up connections gracefully
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Give time for pending operations
+      client.destroy();
+      smoldot.terminate();
+    } catch {
+      // Ignore cleanup errors - they're not critical
+    }
   }
 }
 
