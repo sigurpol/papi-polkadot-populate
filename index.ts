@@ -2,6 +2,7 @@ import { sr25519CreateDerive } from "@polkadot-labs/hdkd";
 import { entropyToMiniSecret, mnemonicToEntropy, DEV_PHRASE } from "@polkadot-labs/hdkd-helpers";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { createClient } from "polkadot-api";
+import type { SS58String } from "polkadot-api";
 import { paseo, MultiAddress } from "@polkadot-api/descriptors";
 import { chainSpec } from "polkadot-api/chains/paseo";
 import { getSmProvider } from "polkadot-api/sm-provider";
@@ -110,13 +111,19 @@ async function main() {
 
     // Calculate funding requirements and check balance immediately
     const PAS = 1_000_000_000_000n; // 1 PAS = 10^12 planck
-    const amountPerAccount = PAS * 1n; // 1 PAS per account
-    const totalAmount = amountPerAccount * BigInt(numNominators);
+    const amountPerAccount = PAS / 2n; // 0.5 PAS per account for initial funding
+    const avgStakePerAccount = PAS / 2n; // Average ~0.5 PAS for staking (ranges from 0.25 to 1)
+    const totalFundingAmount = amountPerAccount * BigInt(numNominators);
+    const totalStakingAmount = avgStakePerAccount * BigInt(numNominators);
+    const totalAmount = totalFundingAmount + totalStakingAmount;
 
     console.log(`\n💸 Funding requirements:`);
-    console.log(`   - Each account will receive: ${amountPerAccount / PAS} PAS`);
-    console.log(`   - Total amount needed: ${totalAmount / PAS} PAS`);
-    console.log(`   - God account balance: ${godBalance / PAS} PAS`);
+    console.log(`   - Initial funding per account: ${Number(amountPerAccount) / Number(PAS)} PAS`);
+    console.log(`   - Average stake per account: ${Number(avgStakePerAccount) / Number(PAS)} PAS`);
+    console.log(`   - Total funding needed: ${Number(totalFundingAmount) / Number(PAS)} PAS`);
+    console.log(`   - Total staking needed: ${Number(totalStakingAmount) / Number(PAS)} PAS`);
+    console.log(`   - Total amount needed: ${Number(totalAmount) / Number(PAS)} PAS`);
+    console.log(`   - God account balance: ${Number(godBalance) / Number(PAS)} PAS`);
 
     if (godBalance < totalAmount) {
       console.error(
@@ -264,6 +271,163 @@ async function main() {
       return { createdCount, skippedCount };
     };
 
+    // Function to stake and nominate
+    const stakeAndNominate = async (from: number, to: number, batchSize = 10) => {
+      console.log(`\n🥩 Starting staking and nomination for accounts ${from} to ${to - 1}...`);
+
+      // First, get the list of all validators
+      const validatorEntries = await api.query.Staking.Validators.getEntries();
+      const allValidators: SS58String[] = validatorEntries.map(
+        ({ keyArgs: [validator] }) => validator
+      );
+
+      if (allValidators.length === 0) {
+        console.error("❌ No validators found on chain!");
+        return;
+      }
+
+      console.log(`📊 Found ${allValidators.length} validators on chain`);
+
+      let counter = from;
+      let stakedCount = 0;
+      let skippedCount = 0;
+
+      while (counter < to) {
+        const batch = [];
+
+        while (batch.length < batchSize && counter < to) {
+          const account = getAccountAtIndex(counter);
+
+          // Check if account is already bonded
+          const ledger = await api.query.Staking.Ledger.getValue(account.address);
+          const isBonded = ledger !== undefined;
+
+          // Check if already a nominator
+          const nominators = await api.query.Staking.Nominators.getValue(account.address);
+          const isNominator = nominators !== undefined;
+
+          if (!isBonded && !isNominator) {
+            // Calculate variable stake amount (between 0.25 and 1 PAS)
+            const baseStake = PAS / 4n; // 0.25 PAS
+            const variableStake = (PAS * 3n) / 4n; // 0.75 PAS range
+            const stakeAmount = baseStake + (variableStake * BigInt(counter % 4)) / 3n;
+
+            console.log(
+              `   [${counter}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
+            );
+
+            // Select random validators
+            const selectedValidators: SS58String[] = [];
+            const validatorsCopy = [...allValidators];
+
+            for (let i = 0; i < Math.min(validatorsPerNominator, allValidators.length); i++) {
+              const randomIndex = Math.floor(Math.random() * validatorsCopy.length);
+              const validator = validatorsCopy[randomIndex];
+              if (validator) {
+                selectedValidators.push(validator);
+                validatorsCopy.splice(randomIndex, 1);
+              }
+            }
+
+            console.log(`      Selected validators: ${selectedValidators.length}`);
+
+            // Create bond and nominate transactions
+            const bondTx = api.tx.Staking.bond({
+              value: stakeAmount,
+              payee: { type: "Staked" },
+            });
+
+            const nominateTx = api.tx.Staking.nominate(selectedValidators);
+
+            // Batch bond and nominate together
+            const batchTx = api.tx.Utility.batch_all([bondTx, nominateTx]);
+            batch.push({ tx: batchTx, signer: account.signer });
+
+            stakedCount++;
+          } else {
+            console.log(
+              `   [${counter}] Skipping ${account.address} (already bonded: ${isBonded}, nominator: ${isNominator})`
+            );
+            skippedCount++;
+          }
+
+          counter++;
+        }
+
+        // Execute batch if we have transactions
+        if (batch.length > 0) {
+          if (isDryRun) {
+            console.log(
+              `\n🔍 DRY RUN: Would execute batch of ${batch.length} stake+nominate operations`
+            );
+          } else {
+            console.log(`\n⚡ Executing batch of ${batch.length} stake+nominate operations...`);
+
+            // Execute transactions in parallel
+            const promises = batch.map(
+              ({ tx, signer }, index) =>
+                new Promise((resolve, reject) => {
+                  let completed = false;
+                  let subscription: { unsubscribe: () => void } | null = null;
+
+                  const timeout = setTimeout(() => {
+                    if (!completed) {
+                      completed = true;
+                      console.log(`   ⚠️ Transaction ${index + 1} timeout`);
+                      if (subscription) {
+                        try {
+                          subscription.unsubscribe();
+                        } catch {}
+                      }
+                      resolve(null);
+                    }
+                  }, 30000);
+
+                  subscription = tx.signSubmitAndWatch(signer).subscribe({
+                    next: (event) => {
+                      if (event.type === "txBestBlocksState") {
+                        console.log(`   ✅ Transaction ${index + 1} included in block`);
+                        if (!completed) {
+                          completed = true;
+                          clearTimeout(timeout);
+                          if (subscription) {
+                            try {
+                              subscription.unsubscribe();
+                            } catch {}
+                          }
+                          resolve(null);
+                        }
+                      }
+                    },
+                    error: (error) => {
+                      if (!completed) {
+                        completed = true;
+                        clearTimeout(timeout);
+                        console.error(`   ❌ Transaction ${index + 1} failed:`, error);
+                        if (subscription) {
+                          try {
+                            subscription.unsubscribe();
+                          } catch {}
+                        }
+                        reject(error);
+                      }
+                    },
+                  });
+                })
+            );
+
+            await Promise.allSettled(promises);
+          }
+        }
+      }
+
+      console.log(`\n📊 Staking Summary:`);
+      console.log(`   - Accounts staked: ${stakedCount}`);
+      console.log(`   - Accounts skipped: ${skippedCount}`);
+
+      return { stakedCount, skippedCount };
+    };
+
     // Execute account creation
     if (isDryRun) {
       console.log(`\n🚧 DRY RUN MODE - No real transactions will be executed`);
@@ -271,6 +435,9 @@ async function main() {
 
       // Simulate what would happen
       await createAccounts(1, numNominators + 1, amountPerAccount, 10);
+
+      // Simulate staking
+      await stakeAndNominate(1, numNominators + 1, 5);
     } else {
       console.log(`\n⚠️  READY TO EXECUTE REAL TRANSACTIONS`);
       console.log(`   This will transfer real funds on Paseo testnet!`);
@@ -281,6 +448,12 @@ async function main() {
 
       // Execute real transactions
       await createAccounts(1, numNominators + 1, amountPerAccount, 10);
+
+      // Execute staking
+      console.log(`\n⏳ Waiting 5 seconds before starting staking operations...`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      await stakeAndNominate(1, numNominators + 1, 5);
     }
   } catch (error) {
     console.error("❌ Error:", error);

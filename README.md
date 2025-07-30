@@ -92,6 +92,6 @@ import { chainSpec } from "polkadot-api/chains/paseo";
 ...
 // get the safely typed API
 const api = client.getTypedApi(paseo);
+...
+const PAS = 1_000_000_000_000n;
 ```
-
-NOTE: this project was created using `bun init` in bun v1.2.16. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
