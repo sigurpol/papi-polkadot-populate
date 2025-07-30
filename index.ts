@@ -176,7 +176,7 @@ async function main() {
               dest: MultiAddress.Id(account.address),
               value: amountPerAccount,
             });
-            batch.push(transfer);
+            batch.push(transfer.decodedCall);
             createdCount++;
           } else {
             console.log(`   [${counter}] Skipping ${account.address} (already exists)`);
@@ -194,7 +194,7 @@ async function main() {
             console.log(`\n⚡ Executing batch of ${batch.length} transfers...`);
 
             // Use utility.batch_all for multiple transfers (batch_all fails all if one fails)
-            const batchTx = batch.length === 1 ? batch[0] : api.tx.Utility.batch_all(batch);
+            const batchTx = api.tx.Utility.batch_all({ calls: batch });
 
             // Sign and submit with timeout
             await new Promise((resolve, reject) => {
@@ -333,22 +333,28 @@ async function main() {
 
             // Ensure we have validators to nominate
             if (selectedValidators.length === 0) {
-              console.error(`   [${counter}] No validators selected for ${account.address}, skipping`);
+              console.error(
+                `   [${counter}] No validators selected for ${account.address}, skipping`
+              );
               continue;
             }
 
             // Create bond and nominate transactions
             const bondTx = api.tx.Staking.bond({
               value: stakeAmount,
-              payee: { type: "Staked" },
+              payee: { type: "Staked", value: undefined },
             });
 
             // Convert SS58String[] to MultiAddress[] explicitly for nominate
-            const validatorTargets = selectedValidators.map(validator => MultiAddress.Id(validator));
-            const nominateTx = api.tx.Staking.nominate(validatorTargets);
+            const validatorTargets = selectedValidators.map((validator) =>
+              MultiAddress.Id(validator)
+            );
+            const nominateTx = api.tx.Staking.nominate({ targets: validatorTargets });
 
             // Batch bond and nominate together
-            const batchTx = api.tx.Utility.batch_all([bondTx, nominateTx]);
+            const batchTx = api.tx.Utility.batch_all({
+              calls: [bondTx.decodedCall, nominateTx.decodedCall],
+            });
             batch.push({ tx: batchTx, signer: account.signer });
 
             stakedCount++;
