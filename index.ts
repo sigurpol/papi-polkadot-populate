@@ -455,18 +455,11 @@ async function main() {
     } else {
       console.log(`\n⚠️  READY TO EXECUTE REAL TRANSACTIONS`);
       console.log(`   This will transfer real funds on Paseo testnet!`);
-      console.log(`   Press Ctrl+C within 5 seconds to cancel...`);
-
-      // Give user time to cancel
-      await new Promise((resolve) => setTimeout(resolve, 5000));
 
       // Execute real transactions
       await createAccounts(1, numNominators + 1, amountPerAccount, 10);
 
       // Execute staking
-      console.log(`\n⏳ Waiting 5 seconds before starting staking operations...`);
-      await new Promise((resolve) => setTimeout(resolve, 5000));
-
       await stakeAndNominate(1, numNominators + 1, 5);
     }
   } catch (error) {
