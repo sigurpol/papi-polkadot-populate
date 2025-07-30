@@ -219,6 +219,7 @@ async function main() {
                   console.log(`   📡 Event: ${event.type}`);
                   if (event.type === "txBestBlocksState") {
                     console.log(`   ✅ Batch included in block`);
+                    console.log(`   📋 Transaction hash: ${event.txHash}`);
                     console.log(`   🔗 https://paseo.subscan.io/extrinsic/${event.txHash}`);
                     if (!completed) {
                       completed = true;
@@ -401,6 +402,7 @@ async function main() {
                     next: (event) => {
                       if (event.type === "txBestBlocksState") {
                         console.log(`   ✅ Transaction ${index + 1} included in block`);
+                        console.log(`   📋 TX ${index + 1} hash: ${event.txHash}`);
                         if (!completed) {
                           completed = true;
                           clearTimeout(timeout);
@@ -442,6 +444,63 @@ async function main() {
       return { stakedCount, skippedCount };
     };
 
+    // Function to display final nominator status
+    const displayNominatorStatus = async (from: number, to: number) => {
+      console.log(`\n📊 FINAL NOMINATOR STATUS`);
+      console.log(`${"=".repeat(60)}`);
+
+      const PAS = 1_000_000_000_000n;
+
+      for (let i = from; i < to; i++) {
+        const account = getAccountAtIndex(i);
+
+        // Get account balance
+        const accountInfo = await api.query.System.Account.getValue(account.address);
+        const freeBalance = accountInfo.data.free;
+        const reservedBalance = accountInfo.data.reserved;
+        const totalBalance = freeBalance + reservedBalance;
+
+        // Get staking info
+        const bondedController = await api.query.Staking.Bonded.getValue(account.address);
+        const nominatorInfo = await api.query.Staking.Nominators.getValue(account.address);
+
+        console.log(
+          `   🔍 Debug: bondedController=${bondedController}, nominatorInfo=${JSON.stringify(nominatorInfo)}`
+        );
+
+        console.log(`\n🏛️  Nominator ${i}: ${account.address}`);
+        console.log(
+          `   💰 Balance: ${Number(totalBalance) / Number(PAS)} PAS (${Number(freeBalance) / Number(PAS)} free + ${Number(reservedBalance) / Number(PAS)} reserved)`
+        );
+
+        if (bondedController) {
+          // Get ledger info to see actual staked amount
+          const ledgerInfo = await api.query.Staking.Ledger.getValue(bondedController);
+          if (ledgerInfo) {
+            const stakedAmount = ledgerInfo.active;
+            console.log(`   🥩 Staking: ${Number(stakedAmount) / Number(PAS)} PAS`);
+          } else {
+            console.log(`   🥩 Staking: Bonded but no ledger info found`);
+          }
+        } else {
+          console.log(`   🥩 Staking: Not bonded`);
+        }
+
+        if (nominatorInfo) {
+          const validators = nominatorInfo.targets;
+          console.log(`   🎯 Nominating ${validators.length} validators:`);
+          validators.forEach((validator, index) => {
+            // Validator is already an SS58String address
+            console.log(`      ${index + 1}. ${validator}`);
+          });
+        } else {
+          console.log(`   🎯 Nominating: No nominations found`);
+        }
+      }
+
+      console.log(`\n${"=".repeat(60)}`);
+    };
+
     // Execute account creation
     if (isDryRun) {
       console.log(`\n🚧 DRY RUN MODE - No real transactions will be executed`);
@@ -452,6 +511,9 @@ async function main() {
 
       // Simulate staking
       await stakeAndNominate(1, numNominators + 1, 5);
+
+      // Display final status
+      await displayNominatorStatus(1, numNominators + 1);
     } else {
       console.log(`\n⚠️  READY TO EXECUTE REAL TRANSACTIONS`);
       console.log(`   This will transfer real funds on Paseo testnet!`);
@@ -461,6 +523,9 @@ async function main() {
 
       // Execute staking
       await stakeAndNominate(1, numNominators + 1, 5);
+
+      // Display final status
+      await displayNominatorStatus(1, numNominators + 1);
     }
   } catch (error) {
     console.error("❌ Error:", error);
