@@ -111,7 +111,7 @@ async function main() {
 
     // Calculate funding requirements and check balance immediately
     const PAS = 1_000_000_000_000n; // 1 PAS = 10^12 planck
-    const amountPerAccount = PAS; // 1 PAS per account for initial funding (covers stake + fees)
+    const amountPerAccount = PAS * 2n; // 2 PAS per account for initial funding (covers stake + fees)
     const avgStakePerAccount = PAS / 2n; // Average ~0.5 PAS for staking (ranges from 0.25 to 1)
     const totalFundingAmount = amountPerAccount * BigInt(numNominators);
     const totalStakingAmount = avgStakePerAccount * BigInt(numNominators);
@@ -449,6 +449,9 @@ async function main() {
       console.log(`\n📊 FINAL NOMINATOR STATUS`);
       console.log(`${"=".repeat(60)}`);
 
+      // Wait a bit for chain state to update
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
       const PAS = 1_000_000_000_000n;
 
       for (let i = from; i < to; i++) {
@@ -464,9 +467,6 @@ async function main() {
         const bondedController = await api.query.Staking.Bonded.getValue(account.address);
         const nominatorInfo = await api.query.Staking.Nominators.getValue(account.address);
 
-        console.log(
-          `   🔍 Debug: bondedController=${bondedController}, nominatorInfo=${JSON.stringify(nominatorInfo)}`
-        );
 
         console.log(`\n🏛️  Nominator ${i}: ${account.address}`);
         console.log(
@@ -520,6 +520,10 @@ async function main() {
 
       // Execute real transactions
       await createAccounts(1, numNominators + 1, amountPerAccount, 10);
+
+      // Wait for account settlement before staking
+      console.log(`\n⏳ Waiting 3 seconds for account settlement...`);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       // Execute staking
       await stakeAndNominate(1, numNominators + 1, 5);
