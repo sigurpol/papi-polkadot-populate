@@ -1642,15 +1642,44 @@ async function createHybridStakers(
 
   // Collect hybrid accounts that need funding
   const hybridAccounts: Array<{ account: any; index: number }> = [];
-  for (let i = 1; i <= hybridCount; i++) {
-    const hybridAccount = getHybridAccountAtIndex(i, derive);
-    const accountInfo = await api.query.System.Account.getValue(hybridAccount.address);
-    const exists = accountInfo.providers > 0;
+  let hybridIndex = 1;
 
-    if (exists) {
-      console.log(`   [Hybrid ${i}] ${hybridAccount.address} already exists - skipping`);
-      continue;
-    }
+  for (let i = 1; i <= hybridCount; i++) {
+    let hybridAccount: any;
+    let isPoolMember = false;
+    let isStaker = false;
+    let exists = false;
+
+    // Find an account that's not already a pool member or staker
+    do {
+      hybridAccount = getHybridAccountAtIndex(hybridIndex, derive);
+
+      // Check if account exists (has providers > 0)
+      const accountInfo = await api.query.System.Account.getValue(hybridAccount.address);
+      exists = accountInfo.providers > 0;
+
+      // Check if account is already a pool member
+      const poolMemberInfo = await api.query.NominationPools.PoolMembers.getValue(
+        hybridAccount.address
+      );
+      isPoolMember = poolMemberInfo !== undefined;
+
+      // Check if account is already a staker (has staking ledger)
+      const stakingLedger = await api.query.Staking.Ledger.getValue(hybridAccount.address);
+      isStaker = stakingLedger !== undefined;
+
+      if (exists || isPoolMember || isStaker) {
+        console.log(
+          `   [Hybrid ${i}] Account ${hybridAccount.address} (index ${hybridIndex}) already exists/member/staker - trying next`
+        );
+        hybridIndex++;
+      }
+    } while (exists || isPoolMember || isStaker);
+
+    console.log(
+      `   [Hybrid ${i}] Selected account ${hybridAccount.address} (index ${hybridIndex})`
+    );
+    hybridIndex++; // Move to next index for next hybrid
 
     if (isDryRun) {
       const poolId = availablePoolIds[i % availablePoolIds.length];
@@ -1667,7 +1696,7 @@ async function createHybridStakers(
       continue;
     }
 
-    hybridAccounts.push({ account: hybridAccount, index: i });
+    hybridAccounts.push({ account: hybridAccount, index: i }); // Use i for display consistency
   }
 
   if (isDryRun || hybridAccounts.length === 0) {
@@ -1750,8 +1779,8 @@ async function createHybridStakers(
     });
 
     // Wait for balance updates
-    console.log(`\n⏳ Waiting 30 seconds for balance availability...`);
-    await new Promise((resolve) => setTimeout(resolve, 30000));
+    console.log(`\n⏳ Waiting 45 seconds for balance availability...`);
+    await new Promise((resolve) => setTimeout(resolve, 45000));
   }
 
   // Now process hybrid stakers sequentially for pool joining and solo staking
@@ -1761,6 +1790,16 @@ async function createHybridStakers(
 
   for (const { account: hybridAccount, index: i } of hybridAccounts) {
     try {
+      // Verify balance before joining pool
+      const accountInfo = await api.query.System.Account.getValue(hybridAccount.address);
+      const freeBalance = accountInfo.data.free;
+      console.log(`   💰 Hybrid ${i} balance: ${Number(freeBalance) / Number(PAS)} PAS`);
+
+      if (freeBalance < poolStake + soloStake + PAS * 5n) {
+        console.error(`   ❌ Hybrid ${i} insufficient balance for operations - skipping`);
+        continue;
+      }
+
       // Join pool first
       const poolId = availablePoolIds[i % availablePoolIds.length];
       console.log(
