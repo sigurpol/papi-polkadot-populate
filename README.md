@@ -328,6 +328,95 @@ bun run index.ts --seed "your seed phrase" --pool-members 10 --hybrid-stakers 5
 
 The tool enforces that pool members and hybrid stakers can only join newly created pools within the same command execution. This ensures predictable behavior and prevents members from joining random existing pools on the network.
 
+## Account Management
+
+The tool provides comprehensive account management capabilities to list and clean up derived accounts created by the tool.
+
+### Account Management Parameters
+
+- `--list-accounts` - List all derived accounts created by this tool (shows balances and staking status)
+- `--unbond-accounts <range>` - Unbond, stop nominating, and prepare accounts for fund return (e.g., '1-5' or '3,7,9')
+- `--dry-run` - Show detailed analysis without executing transactions
+
+### Account Management Examples
+
+**List all derived accounts:**
+
+```bash
+bun run index.ts --seed "your seed phrase" --list-accounts
+```
+
+This shows all accounts across different derivation paths:
+
+- Regular nominators (///1, ///2, etc.)
+- Pool creators (//pool/1, //pool/2, etc.)
+- Pool members (//member/1, //member/2, etc.)
+- Hybrid stakers (//hybrid/1, //hybrid/2, etc.)
+
+**Unbond specific accounts and return funds:**
+
+```bash
+# Unbond accounts 1, 2, and 3 (checks all derivation paths automatically)
+bun run index.ts --seed "your seed phrase" --unbond-accounts "1-3"
+
+# Unbond specific account indices
+bun run index.ts --seed "your seed phrase" --unbond-accounts "5,8,12"
+
+# Mixed range and specific indices
+bun run index.ts --seed "your seed phrase" --unbond-accounts "1-3,7,10-12"
+
+# Dry run to see what would be unbonded
+bun run index.ts --seed "your seed phrase" --unbond-accounts "1-10" --dry-run
+```
+
+### Account Management Behavior
+
+**Account Discovery:**
+
+- The tool automatically detects which derivation path each account index uses
+- Checks all account types: regular nominators, pool creators, pool members, and hybrid stakers
+- Only processes accounts that have staking activities (bonded or pool membership)
+
+**Unbonding Process:**
+
+1. **Chill**: Stops nominating if the account is currently nominating validators
+2. **Unbond Solo Stakes**: Initiates unbonding from direct staking (if applicable)
+3. **Leave Pools**: Initiates unbonding from nomination pools (if applicable)
+4. **Wait Period**: Accounts must wait 28 days (on Paseo) for unbonding to complete
+5. **Withdrawal**: After the unbonding period, funds can be withdrawn and transferred
+
+**Important Notes:**
+
+- The unbonding process requires a 28-day waiting period on Paseo testnet
+- Accounts can have both solo stakes and pool memberships (hybrid stakers)
+- The tool handles all staking types automatically
+- After unbonding completes, you'll need to manually withdraw and transfer funds back to the god account
+
+### Account Management Use Cases
+
+**Clean up test environment:**
+
+```bash
+# List all accounts first to see what exists
+bun run index.ts --seed "your seed phrase" --list-accounts
+
+# Unbond all accounts from index 1 to 50
+bun run index.ts --seed "your seed phrase" --unbond-accounts "1-50"
+
+# Check the unbonding status
+bun run index.ts --seed "your seed phrase" --list-accounts
+```
+
+**Selective cleanup:**
+
+```bash
+# Only unbond specific problematic accounts
+bun run index.ts --seed "your seed phrase" --unbond-accounts "10,15,20-25" --dry-run
+
+# Execute after reviewing the dry run
+bun run index.ts --seed "your seed phrase" --unbond-accounts "10,15,20-25"
+```
+
 ## Choose your network
 
 The project targets initially `paseo` testnet.
