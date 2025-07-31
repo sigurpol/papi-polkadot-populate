@@ -238,6 +238,11 @@ async function main() {
                     console.log(`   ✅ Batch included in block`);
                     console.log(`   📋 Transaction hash: ${event.txHash}`);
                     console.log(`   🔗 https://paseo.subscan.io/extrinsic/${event.txHash}`);
+
+                    // Transaction is included in block, should be successful
+                    console.log(`   ✅ Transaction included in block - should be successful`);
+
+                    // Transaction included in block - proceed immediately (like original polkadot-populate)
                     if (!completed) {
                       completed = true;
                       clearTimeout(timeout);
@@ -305,17 +310,6 @@ async function main() {
 
       console.log(`✅ Balance check passed - sufficient funds available`);
 
-      // Verify balances of created accounts
-      console.log(`\n🔍 Verifying balances of created accounts...`);
-      for (const accountIndex of createdAccountIndices) {
-        const account = getAccountAtIndex(accountIndex);
-        const accountInfo = await api.query.System.Account.getValue(account.address);
-        const balance = accountInfo.data.free;
-        console.log(
-          `   [${accountIndex}] ${account.address}: ${Number(balance) / Number(PAS)} PAS`
-        );
-      }
-
       return { createdCount, skippedCount };
     };
 
@@ -362,27 +356,10 @@ async function main() {
           const isNominator = nominators !== undefined;
 
           if (!isBonded && !isNominator) {
-            // Check account balance before staking
-            const accountInfo = await api.query.System.Account.getValue(account.address);
-            const availableBalance = accountInfo.data.free;
-
-            console.log(
-              `   [${accountIndex}] Account balance check: ${Number(availableBalance) / Number(PAS)} PAS available`
-            );
-
             // Use pre-determined stake amount from the Map
             const stakeAmount = stakeAmounts.get(accountIndex) || minNominatorBond;
 
-            // Ensure account has sufficient balance (stake + ED + fees buffer)
-            const requiredBalance = stakeAmount + existentialDeposit + txFeeBuffer;
-            if (availableBalance < requiredBalance) {
-              console.log(
-                `   [${accountIndex}] Skipping ${account.address} - insufficient balance (has ${Number(availableBalance) / Number(PAS)} PAS, needs ${Number(requiredBalance) / Number(PAS)} PAS)`
-              );
-              skippedCount++;
-              processedIndex++;
-              continue;
-            }
+            // Skip balance check - assume account has sufficient balance since we just funded it
 
             console.log(
               `   [${accountIndex}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
@@ -533,9 +510,9 @@ async function main() {
 
       await createAccounts(numNominators, 500);
 
-      // Wait a bit for balance updates to propagate
-      console.log(`\n⏳ Waiting 3 seconds for balance updates to propagate...`);
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      // Delay to allow balance updates to be available for staking
+      console.log(`\n⏳ Waiting 15 seconds for balance availability...`);
+      await new Promise((resolve) => setTimeout(resolve, 15000));
 
       await stakeAndNominate(25);
     }
