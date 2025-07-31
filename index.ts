@@ -1230,8 +1230,8 @@ async function createPools(
     });
 
     // Wait for balance updates
-    console.log(`\n⏳ Waiting 10 seconds for balance availability...`);
-    await new Promise((resolve) => setTimeout(resolve, 10000));
+    console.log(`\n⏳ Waiting 25 seconds for balance availability...`);
+    await new Promise((resolve) => setTimeout(resolve, 25000));
   }
 
   // Create pools sequentially to track pool IDs properly
@@ -1640,14 +1640,10 @@ async function createHybridStakers(
   );
   console.log(`   📊 Available validators: ${allValidators.length}`);
 
-  let createdCount = 0;
-  let joinedCount = 0;
-  let stakedCount = 0;
-
+  // Collect hybrid accounts that need funding
+  const hybridAccounts: Array<{ account: any; index: number }> = [];
   for (let i = 1; i <= hybridCount; i++) {
     const hybridAccount = getHybridAccountAtIndex(i, derive);
-
-    // Check if account exists
     const accountInfo = await api.query.System.Account.getValue(hybridAccount.address);
     const exists = accountInfo.providers > 0;
 
@@ -1656,13 +1652,11 @@ async function createHybridStakers(
       continue;
     }
 
-    const totalFunding = soloStake + poolStake + PAS * 8n; // both stakes + buffer
-    console.log(
-      `   [Hybrid ${i}] Funding ${hybridAccount.address} with ${Number(totalFunding) / Number(PAS)} PAS`
-    );
-
     if (isDryRun) {
       const poolId = availablePoolIds[i % availablePoolIds.length];
+      console.log(
+        `   🔍 DRY RUN: Would fund ${hybridAccount.address} with ${Number(soloStake + poolStake + PAS * 8n) / Number(PAS)} PAS`
+      );
       console.log(
         `   🔍 DRY RUN: Would join pool ${poolId} with ${Number(poolStake) / Number(PAS)} PAS`
       );
@@ -1673,66 +1667,100 @@ async function createHybridStakers(
       continue;
     }
 
-    try {
-      // Fund hybrid account
-      const fundTx = api.tx.Balances.transfer_allow_death({
-        dest: MultiAddress.Id(hybridAccount.address),
-        value: totalFunding,
-      });
+    hybridAccounts.push({ account: hybridAccount, index: i });
+  }
 
-      await new Promise((resolve, _reject) => {
-        let completed = false;
-        let subscription: { unsubscribe: () => void } | null = null;
+  if (isDryRun || hybridAccounts.length === 0) {
+    return { createdCount: 0, joinedCount: 0, stakedCount: 0 };
+  }
 
-        const timeout = setTimeout(() => {
-          if (!completed) {
-            completed = true;
-            console.log(`   ⚠️  Funding timeout for hybrid ${i}`);
-            if (subscription) {
-              try {
-                subscription.unsubscribe();
-              } catch {}
-            }
-            resolve(null);
+  // Batch fund all hybrid accounts
+  console.log(`\n💰 Batch funding ${hybridAccounts.length} hybrid accounts...`);
+  const fundingTxs = hybridAccounts.map(({ account }) => {
+    const totalFunding = soloStake + poolStake + PAS * 8n; // both stakes + buffer
+    console.log(`   💸 Funding ${account.address} with ${Number(totalFunding) / Number(PAS)} PAS`);
+    return api.tx.Balances.transfer_allow_death({
+      dest: MultiAddress.Id(account.address),
+      value: totalFunding,
+    });
+  });
+
+  if (fundingTxs.length > 0) {
+    const batchFundTx = api.tx.Utility.batch_all({ calls: fundingTxs.map((tx) => tx.decodedCall) });
+
+    await new Promise((resolve, reject) => {
+      let completed = false;
+      let subscription: { unsubscribe: () => void } | null = null;
+
+      const timeout = setTimeout(() => {
+        if (!completed) {
+          completed = true;
+          console.log(`   ⚠️  Batch funding timeout`);
+          if (subscription) {
+            try {
+              subscription.unsubscribe();
+            } catch {}
           }
-        }, 30000);
+          reject(new Error("Batch funding timeout"));
+        }
+      }, 60000);
 
-        subscription = fundTx.signSubmitAndWatch(godSigner).subscribe({
-          next: (event: TransactionEvent) => {
-            if (event.type === "txBestBlocksState") {
-              console.log(`   ✅ Hybrid ${i} funded successfully`);
-              createdCount++;
-              if (!completed) {
-                completed = true;
-                clearTimeout(timeout);
-                if (subscription) {
-                  try {
-                    subscription.unsubscribe();
-                  } catch {}
-                }
-                resolve(null);
-              }
-            }
-          },
-          error: (error: Error) => {
+      subscription = batchFundTx.signSubmitAndWatch(godSigner).subscribe({
+        next: (event: TransactionEvent) => {
+          if (event.type === "txBestBlocksState") {
+            console.log(`   ✅ Batch funding completed successfully`);
             if (!completed) {
               completed = true;
               clearTimeout(timeout);
-              console.error(`   ❌ Hybrid ${i} funding failed:`, error);
               if (subscription) {
                 try {
                   subscription.unsubscribe();
                 } catch {}
               }
-              resolve(null); // Continue with next hybrid
+              resolve(null);
             }
-          },
-        });
+          } else if (event.type === "txInvalid") {
+            if (!completed) {
+              completed = true;
+              clearTimeout(timeout);
+              console.error(`   ❌ Batch funding failed - invalid transaction`);
+              if (subscription) {
+                try {
+                  subscription.unsubscribe();
+                } catch {}
+              }
+              reject(new Error("Invalid transaction"));
+            }
+          }
+        },
+        error: (error: Error) => {
+          if (!completed) {
+            completed = true;
+            clearTimeout(timeout);
+            console.error(`   ❌ Batch funding failed:`, error);
+            if (subscription) {
+              try {
+                subscription.unsubscribe();
+              } catch {}
+            }
+            reject(error);
+          }
+        },
       });
+    });
 
-      // Wait for balance to be available
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+    // Wait for balance updates
+    console.log(`\n⏳ Waiting 30 seconds for balance availability...`);
+    await new Promise((resolve) => setTimeout(resolve, 30000));
+  }
 
+  // Now process hybrid stakers sequentially for pool joining and solo staking
+  let createdCount = hybridAccounts.length;
+  let joinedCount = 0;
+  let stakedCount = 0;
+
+  for (const { account: hybridAccount, index: i } of hybridAccounts) {
+    try {
       // Join pool first
       const poolId = availablePoolIds[i % availablePoolIds.length];
       console.log(
@@ -1882,7 +1910,7 @@ async function createHybridStakers(
       // Small delay before next hybrid
       await new Promise((resolve) => setTimeout(resolve, 1000));
     } catch (error) {
-      console.error(`   ❌ Failed to create hybrid staker ${i}:`, error);
+      console.error(`   ❌ Failed to process hybrid staker ${i}:`, error);
     }
   }
 
