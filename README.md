@@ -2,7 +2,7 @@
 
 This tool aims to easily create several hard-derived child accounts from a funded account, fund them, and have all of them nominate.
 
-The stakes of these accounts are somewhat variable, so that when we take the election snapshot, some accounts are included while others are not.
+The stakes of these accounts use pre-determined variable amounts. Each nominator is assigned a stake amount ranging from the minimum nominator staking bond (currently 250 PAS on Paseo, as read from the chain) up to 500 PAS. This variability ensures that when we take the election snapshot, some accounts are included while others are not.
 
 The project is inspired by https://github.com/shawntabrizi/polkadot-populate.
 
@@ -93,5 +93,5 @@ import { chainSpec } from "polkadot-api/chains/paseo";
 // get the safely typed API
 const api = client.getTypedApi(paseo);
 ...
-const PAS = 1_000_000_000_000n;
+const PAS = 10_000_000_000n; // 1 PAS = 10^10 planck
 ```

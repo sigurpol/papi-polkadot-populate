@@ -120,17 +120,34 @@ async function main() {
     // Account for existential deposit (1 PAS) and transaction fees
     const existentialDeposit = PAS; // 1 PAS
     const txFeeBuffer = PAS; // 1 PAS for transaction fees buffer
-    const amountPerAccount = minNominatorBond + existentialDeposit + txFeeBuffer; // MinBond + ED + fees
-    const avgStakePerAccount = minNominatorBond; // We'll stake exactly the minimum required
-    const totalFundingAmount = amountPerAccount * BigInt(numNominators);
-    const totalStakingAmount = avgStakePerAccount * BigInt(numNominators);
-    const totalAmount = totalFundingAmount + totalStakingAmount;
+
+    // Pre-determine stake amounts for each nominator (250-500 PAS)
+    const maxStake = PAS * 500n;
+    const stakeRange = maxStake - minNominatorBond;
+    const stakeAmounts: bigint[] = [];
+    let totalStakeAmount = 0n;
+
+    for (let i = 1; i <= numNominators; i++) {
+      const variableAmount = (stakeRange * BigInt(i % 10)) / 9n;
+      const stakeAmount = minNominatorBond + variableAmount;
+      stakeAmounts.push(stakeAmount);
+      totalStakeAmount += stakeAmount;
+    }
+
+    // Calculate total amount needed (stake + fixed buffer per account)
+    const fixedBufferPerAccount = existentialDeposit + txFeeBuffer;
+    const totalFixedBuffer = fixedBufferPerAccount * BigInt(numNominators);
+    const totalAmount = totalStakeAmount + totalFixedBuffer;
 
     console.log(`\n💸 Funding requirements:`);
-    console.log(`   - Initial funding per account: ${Number(amountPerAccount) / Number(PAS)} PAS`);
-    console.log(`   - Average stake per account: ${Number(avgStakePerAccount) / Number(PAS)} PAS`);
-    console.log(`   - Total funding needed: ${Number(totalFundingAmount) / Number(PAS)} PAS`);
-    console.log(`   - Total staking needed: ${Number(totalStakingAmount) / Number(PAS)} PAS`);
+    console.log(
+      `   - Stake range: ${Number(minNominatorBond) / Number(PAS)} - ${Number(maxStake) / Number(PAS)} PAS`
+    );
+    console.log(
+      `   - Fixed buffer per account: ${Number(fixedBufferPerAccount) / Number(PAS)} PAS (ED + fees)`
+    );
+    console.log(`   - Total stake amount: ${Number(totalStakeAmount) / Number(PAS)} PAS`);
+    console.log(`   - Total fixed buffer: ${Number(totalFixedBuffer) / Number(PAS)} PAS`);
     console.log(`   - Total amount needed: ${Number(totalAmount) / Number(PAS)} PAS`);
     console.log(`   - God account balance: ${Number(godBalance) / Number(PAS)} PAS`);
 
@@ -151,16 +168,12 @@ async function main() {
         keyPair: childKeyPair,
         address: ss58Encode(childKeyPair.publicKey, 0),
         signer: getPolkadotSigner(childKeyPair.publicKey, "Sr25519", childKeyPair.sign),
+        stakeAmount: stakeAmounts[index - 1] || minNominatorBond, // Get pre-determined stake
       };
     };
 
     // Function to create accounts with batch transfers
-    const createAccounts = async (
-      from: number,
-      to: number,
-      amountPerAccount: bigint,
-      batchSize = 500
-    ) => {
+    const createAccounts = async (from: number, to: number, batchSize = 500) => {
       console.log(`\n📝 Creating accounts from ${from} to ${to - 1} (${to - from} accounts)...`);
       console.log(
         `   📊 Using batch size of ${batchSize} - estimated ${Math.ceil((to - from) / batchSize)} batches`
@@ -182,11 +195,15 @@ async function main() {
           const shouldCreate = accountInfo.providers === 0;
 
           if (shouldCreate) {
-            console.log(`   [${counter}] Creating ${account.address}`);
+            // Fund with exact stake amount + fixed buffer
+            const fundingAmount = account.stakeAmount + fixedBufferPerAccount;
+            console.log(
+              `   [${counter}] Creating ${account.address} with ${Number(fundingAmount) / Number(PAS)} PAS (stake: ${Number(account.stakeAmount) / Number(PAS)} PAS)`
+            );
             // Use transfer_allow_death for creating new accounts
             const transfer = api.tx.Balances.transfer_allow_death({
               dest: MultiAddress.Id(account.address),
-              value: amountPerAccount,
+              value: fundingAmount,
             });
             batch.push(transfer.decodedCall);
             createdCount++;
@@ -326,8 +343,8 @@ async function main() {
             const accountInfo = await api.query.System.Account.getValue(account.address);
             const availableBalance = accountInfo.data.free;
 
-            // Use minimum nominator bond as stake amount
-            const stakeAmount = minNominatorBond;
+            // Use pre-determined stake amount
+            const stakeAmount = account.stakeAmount;
 
             // Ensure account has sufficient balance (stake + ED + fees buffer)
             const requiredBalance = stakeAmount + existentialDeposit + txFeeBuffer;
@@ -479,7 +496,7 @@ async function main() {
       console.log(`   To execute real transactions, run without --dry-run flag`);
 
       // Simulate what would happen
-      await createAccounts(1, numNominators + 1, amountPerAccount, 10);
+      await createAccounts(1, numNominators + 1, 10);
 
       // Simulate staking
       await stakeAndNominate(1, numNominators + 1, 5);
@@ -487,7 +504,7 @@ async function main() {
       console.log(`\n⚠️  READY TO EXECUTE REAL TRANSACTIONS`);
       console.log(`   This will transfer real funds on Paseo testnet!`);
 
-      await createAccounts(1, numNominators + 1, amountPerAccount, 500);
+      await createAccounts(1, numNominators + 1, 500);
 
       await stakeAndNominate(1, numNominators + 1, 25);
     }
