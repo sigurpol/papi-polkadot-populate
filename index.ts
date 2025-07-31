@@ -1502,8 +1502,8 @@ async function createPoolMembers(
       });
 
       // Wait for balance updates
-      console.log(`\n⏳ Waiting 15 seconds for balance availability...`);
-      await new Promise((resolve) => setTimeout(resolve, 15000));
+      console.log(`\n⏳ Waiting 25 seconds for balance availability...`);
+      await new Promise((resolve) => setTimeout(resolve, 25000));
 
       // Have members join pools
       console.log(`\n🏊 Having members join pools...`);
