@@ -153,16 +153,6 @@ The tool uses different derivation paths for different account types:
 - Hybrid stakers: `//hybrid/1`, `//hybrid/2`, etc.
 - Regular nominators: `///1`, `///2`, etc.
 
-### Chain Parameter Integration
-
-The tool automatically fetches and displays current chain parameters:
-
-- **MinCreateBond**: Minimum stake required to create a pool (currently 0 PAS on Paseo)
-- **MinJoinBond**: Minimum stake required to join a pool (currently 1 PAS on Paseo)
-- **MaxPools**: Maximum number of pools allowed on chain
-- **MaxPoolMembers**: Maximum number of pool members allowed
-- Current pool and member counts
-
 ### Pool Creation Examples
 
 **Create 3 pools using chain minimums:**

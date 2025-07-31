@@ -913,7 +913,7 @@ async function createPoolsDryRun(
     const accountInfo = await api.query.System.Account.getValue(poolAccount.address);
     const exists = accountInfo.providers > 0;
 
-    const fundingNeeded = poolStake + PAS * 2n; // stake + buffer
+    const fundingNeeded = poolStake + PAS * 5n; // stake + buffer
     totalFunding += fundingNeeded;
 
     console.log(`   [Pool ${i}] Creator: ${poolAccount.address}`);
@@ -964,7 +964,7 @@ async function createPoolMembersDryRun(
     const exists = accountInfo.providers > 0;
 
     if (!exists) {
-      const fundingNeeded = memberStake + PAS * 2n; // stake + buffer
+      const fundingNeeded = memberStake + PAS * 5n; // stake + buffer
       totalFunding += fundingNeeded;
 
       // Determine which pool this member would join
@@ -1041,7 +1041,7 @@ async function createHybridStakersDryRun(
     const exists = accountInfo.providers > 0;
 
     if (!exists) {
-      const fundingNeeded = soloStake + poolStake + PAS * 3n; // both stakes + buffer
+      const fundingNeeded = soloStake + poolStake + PAS * 8n; // both stakes + buffer
       totalFunding += fundingNeeded;
 
       // Determine which pool this hybrid would join
@@ -1091,6 +1091,8 @@ async function createPools(
   isDryRun: boolean,
   batchSize = 10
 ) {
+  // Get starting pool count to calculate pool IDs
+  const startingPoolCount = await api.query.NominationPools.CounterForBondedPools.getValue();
   console.log(`\n🏊 Creating ${poolCount} nomination pools...`);
   console.log(`   📊 Using batch size of ${batchSize} for funding`);
 
@@ -1108,7 +1110,7 @@ async function createPools(
 
     if (!exists) {
       // Fund pool creator account
-      const fundingAmount = poolStake + PAS * 2n; // stake + buffer
+      const fundingAmount = poolStake + PAS * 5n; // stake + buffer
       console.log(
         `   [Pool ${i}] Funding creator ${poolAccount.address} with ${Number(fundingAmount) / Number(PAS)} PAS`
       );
@@ -1200,6 +1202,11 @@ async function createPools(
 
     console.log(`   [Pool ${poolIndex}] Creating pool with creator ${poolAccount.address}...`);
 
+    // Check account balance before pool creation
+    const accountInfo = await api.query.System.Account.getValue(poolAccount.address);
+    const freeBalance = accountInfo.data.free;
+    console.log(`   💰 Creator balance: ${Number(freeBalance) / Number(PAS)} PAS`);
+
     try {
       // Create pool with the pool account as root, nominator, and bouncer
       const createPoolTx = api.tx.NominationPools.create({
@@ -1254,9 +1261,10 @@ async function createPools(
               console.log(`   ✅ Pool ${poolIndex} created successfully`);
               console.log(`   📋 TX hash: ${event.txHash}`);
 
-              // TODO: Extract pool ID from events if needed
-              // For now, assume sequential pool IDs
-              // createdPoolIds.push(actualPoolId);
+              // Calculate pool ID based on starting count and pool index
+              const estimatedPoolId = startingPoolCount + poolIndex;
+              createdPoolIds.push(estimatedPoolId);
+              console.log(`   🆔 Pool ID: ${estimatedPoolId}`);
 
               if (!completed) {
                 completed = true;
@@ -1300,6 +1308,14 @@ async function createPools(
   console.log(`   - Creator accounts processed: ${poolAccounts.length}`);
   console.log(`   - Pool creation attempts completed`);
 
+  if (createdPoolIds.length > 0) {
+    console.log(`\n🎯 Created Pool Details:`);
+    createdPoolIds.forEach((poolId, index) => {
+      const creatorAccount = poolAccounts[index];
+      console.log(`   Pool ${poolId}: Creator ${creatorAccount.address}`);
+    });
+  }
+
   return { createdCount: poolAccounts.length };
 }
 
@@ -1329,6 +1345,7 @@ async function createPoolMembers(
   let memberIndex = 1;
   let createdCount = 0;
   let joinedCount = 0;
+  const successfulJoins: Array<{ memberAddress: string; poolId: number; memberIndex: number }> = [];
 
   while (createdCount < memberCount) {
     const batch = [];
@@ -1343,7 +1360,7 @@ async function createPoolMembers(
       const exists = accountInfo.providers > 0;
 
       if (!exists) {
-        const fundingAmount = memberStake + PAS * 2n; // stake + buffer
+        const fundingAmount = memberStake + PAS * 5n; // stake + buffer
         console.log(
           `   [Member ${memberIndex}] Funding ${memberAccount.address} with ${Number(fundingAmount) / Number(PAS)} PAS`
         );
@@ -1420,8 +1437,8 @@ async function createPoolMembers(
       });
 
       // Wait for balance updates
-      console.log(`\n⏳ Waiting 5 seconds for balance availability...`);
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      console.log(`\n⏳ Waiting 15 seconds for balance availability...`);
+      await new Promise((resolve) => setTimeout(resolve, 15000));
 
       // Have members join pools
       console.log(`\n🏊 Having members join pools...`);
@@ -1430,6 +1447,10 @@ async function createPoolMembers(
         console.log(
           `   [Member ${index}] Joining pool ${poolId} with ${Number(memberStake) / Number(PAS)} PAS`
         );
+
+        // Check account balance before joining
+        const preJoinBalance = await api.query.System.Account.getValue(account.address);
+        console.log(`   💰 Member balance: ${Number(preJoinBalance.data.free) / Number(PAS)} PAS`);
 
         try {
           const joinTx = api.tx.NominationPools.join({
@@ -1459,6 +1480,11 @@ async function createPoolMembers(
                 if (event.type === "txBestBlocksState") {
                   console.log(`   ✅ Member ${index} joined pool ${poolId}`);
                   joinedCount++;
+                  successfulJoins.push({
+                    memberAddress: account.address,
+                    poolId: poolId,
+                    memberIndex: index,
+                  });
                   if (!completed) {
                     completed = true;
                     clearTimeout(timeout);
@@ -1505,6 +1531,13 @@ async function createPoolMembers(
   console.log(`\n📊 Pool Members Summary:`);
   console.log(`   - Members created: ${createdCount}`);
   console.log(`   - Members joined pools: ${joinedCount}`);
+
+  if (successfulJoins.length > 0) {
+    console.log(`\n🎯 Successful Member Joins:`);
+    successfulJoins.forEach(({ memberAddress, poolId, memberIndex }) => {
+      console.log(`   Member ${memberIndex}: ${memberAddress} → Pool ${poolId}`);
+    });
+  }
 
   return { createdCount, joinedCount };
 }
@@ -1554,7 +1587,7 @@ async function createHybridStakers(
       continue;
     }
 
-    const totalFunding = soloStake + poolStake + PAS * 3n; // both stakes + buffer
+    const totalFunding = soloStake + poolStake + PAS * 8n; // both stakes + buffer
     console.log(
       `   [Hybrid ${i}] Funding ${hybridAccount.address} with ${Number(totalFunding) / Number(PAS)} PAS`
     );
