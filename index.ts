@@ -102,17 +102,26 @@ async function main() {
     const godAddress = ss58Encode(godKeyPair.publicKey, 0);
     console.log(`🔑 God account address: ${godAddress}`);
 
+    // Define PAS constant
+    const PAS = 10_000_000_000n; // 1 PAS = 10^10 planck (same as DOT)
+
     // Check god account balance
     const accountInfo = await api.query.System.Account.getValue(godAddress);
     const godBalance = accountInfo.data.free;
     console.log(
-      `💰 God account balance: ${godBalance} (free), ${accountInfo.data.reserved} (reserved)`
+      `💰 God account balance: ${godBalance} (${Number(godBalance) / Number(PAS)} PAS) free, ${accountInfo.data.reserved} (${Number(accountInfo.data.reserved) / Number(PAS)} PAS) reserved`
     );
 
     // Calculate funding requirements and check balance immediately
-    const PAS = 1_000_000_000_000n; // 1 PAS = 10^12 planck
-    const amountPerAccount = PAS * 2n; // 2 PAS per account for initial funding (covers stake + fees)
-    const avgStakePerAccount = PAS / 2n; // Average ~0.5 PAS for staking (ranges from 0.25 to 1)
+    // Get MinNominatorStakingBond from storage
+    const minNominatorBond = await api.query.Staking.MinNominatorBond.getValue();
+    console.log(`\n⚡ MinNominatorStakingBond: ${Number(minNominatorBond) / Number(PAS)} PAS`);
+
+    // Account for existential deposit (1 PAS) and transaction fees
+    const existentialDeposit = PAS; // 1 PAS
+    const txFeeBuffer = PAS; // 1 PAS for transaction fees buffer
+    const amountPerAccount = minNominatorBond + existentialDeposit + txFeeBuffer; // MinBond + ED + fees
+    const avgStakePerAccount = minNominatorBond; // We'll stake exactly the minimum required
     const totalFundingAmount = amountPerAccount * BigInt(numNominators);
     const totalStakingAmount = avgStakePerAccount * BigInt(numNominators);
     const totalAmount = totalFundingAmount + totalStakingAmount;
@@ -317,13 +326,11 @@ async function main() {
             const accountInfo = await api.query.System.Account.getValue(account.address);
             const availableBalance = accountInfo.data.free;
 
-            // Calculate variable stake amount (between 0.25 and 1 PAS)
-            const baseStake = PAS / 4n; // 0.25 PAS
-            const variableStake = (PAS * 3n) / 4n; // 0.75 PAS range
-            const stakeAmount = baseStake + (variableStake * BigInt(counter % 4)) / 3n;
+            // Use minimum nominator bond as stake amount
+            const stakeAmount = minNominatorBond;
 
-            // Ensure account has sufficient balance (stake + fees buffer)
-            const requiredBalance = stakeAmount + PAS / 10n; // stake + 0.1 PAS for fees
+            // Ensure account has sufficient balance (stake + ED + fees buffer)
+            const requiredBalance = stakeAmount + existentialDeposit + txFeeBuffer;
             if (availableBalance < requiredBalance) {
               console.log(
                 `   [${counter}] Skipping ${account.address} - insufficient balance (has ${Number(availableBalance) / Number(PAS)} PAS, needs ${Number(requiredBalance) / Number(PAS)} PAS)`
