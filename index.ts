@@ -305,6 +305,17 @@ async function main() {
 
       console.log(`✅ Balance check passed - sufficient funds available`);
 
+      // Verify balances of created accounts
+      console.log(`\n🔍 Verifying balances of created accounts...`);
+      for (const accountIndex of createdAccountIndices) {
+        const account = getAccountAtIndex(accountIndex);
+        const accountInfo = await api.query.System.Account.getValue(account.address);
+        const balance = accountInfo.data.free;
+        console.log(
+          `   [${accountIndex}] ${account.address}: ${Number(balance) / Number(PAS)} PAS`
+        );
+      }
+
       return { createdCount, skippedCount };
     };
 
@@ -354,6 +365,10 @@ async function main() {
             // Check account balance before staking
             const accountInfo = await api.query.System.Account.getValue(account.address);
             const availableBalance = accountInfo.data.free;
+
+            console.log(
+              `   [${accountIndex}] Account balance check: ${Number(availableBalance) / Number(PAS)} PAS available`
+            );
 
             // Use pre-determined stake amount from the Map
             const stakeAmount = stakeAmounts.get(accountIndex) || minNominatorBond;
@@ -517,6 +532,10 @@ async function main() {
       console.log(`   This will transfer real funds on Paseo testnet!`);
 
       await createAccounts(numNominators, 500);
+
+      // Wait a bit for balance updates to propagate
+      console.log(`\n⏳ Waiting 3 seconds for balance updates to propagate...`);
+      await new Promise((resolve) => setTimeout(resolve, 3000));
 
       await stakeAndNominate(25);
     }
