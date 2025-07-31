@@ -27,7 +27,7 @@ The tool accepts the following command-line parameters:
 
 ### Optional Parameters
 
-- `--nominators <number>` - Number of nominator accounts to create (default: 100)
+- `--nominators <number>` - Number of NEW nominator accounts to create (default: 100). The tool will skip any existing accounts and create exactly this many new ones.
 - `--validators-per-nominator <number>` - Number of validators each nominator will select (default: 16)
 - `--dry-run` - Show what would happen without executing transactions (optional)
 
@@ -68,6 +68,23 @@ Execute real transactions (default behavior):
 ```bash
 bun run index.ts --seed "your funded seed" --nominators 5
 ```
+
+## Account Creation Logic
+
+The tool uses hard-derived accounts with paths like `///1`, `///2`, `///3`, etc. When you specify `--nominators N`, the tool will:
+
+1. Start checking from account `///1`
+2. Skip any accounts that already exist on-chain
+3. Continue checking sequential indices until it finds exactly N accounts that don't exist
+4. Create and fund those N new accounts
+
+For example, if you specify `--nominators 10` and accounts `///1`, `///2`, and `///5` already exist, the tool will create accounts at indices `3`, `4`, `6`, `7`, `8`, `9`, `10`, `11`, `12`, and `13` to ensure exactly 10 new accounts are created.
+
+Each new account is funded with:
+
+- Its predetermined stake amount (250-500 PAS)
+- 1 PAS for existential deposit
+- 1 PAS buffer for transaction fees
 
 ## Choose your network
 

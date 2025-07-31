@@ -124,41 +124,21 @@ async function main() {
     // Pre-determine stake amounts for each nominator (250-500 PAS)
     const maxStake = PAS * 500n;
     const stakeRange = maxStake - minNominatorBond;
-    const stakeAmounts: bigint[] = [];
-    let totalStakeAmount = 0n;
+    const stakeAmounts: Map<number, bigint> = new Map(); // Map account index to stake amount
+    const createdAccountIndices: number[] = []; // Track which accounts we actually create
 
-    for (let i = 1; i <= numNominators; i++) {
-      const variableAmount = (stakeRange * BigInt(i % 10)) / 9n;
-      const stakeAmount = minNominatorBond + variableAmount;
-      stakeAmounts.push(stakeAmount);
-      totalStakeAmount += stakeAmount;
-    }
-
-    // Calculate total amount needed (stake + fixed buffer per account)
+    // Calculate fixed buffer per account
     const fixedBufferPerAccount = existentialDeposit + txFeeBuffer;
-    const totalFixedBuffer = fixedBufferPerAccount * BigInt(numNominators);
-    const totalAmount = totalStakeAmount + totalFixedBuffer;
 
-    console.log(`\n💸 Funding requirements:`);
+    console.log(`\n💸 Funding configuration:`);
     console.log(
       `   - Stake range: ${Number(minNominatorBond) / Number(PAS)} - ${Number(maxStake) / Number(PAS)} PAS`
     );
     console.log(
       `   - Fixed buffer per account: ${Number(fixedBufferPerAccount) / Number(PAS)} PAS (ED + fees)`
     );
-    console.log(`   - Total stake amount: ${Number(totalStakeAmount) / Number(PAS)} PAS`);
-    console.log(`   - Total fixed buffer: ${Number(totalFixedBuffer) / Number(PAS)} PAS`);
-    console.log(`   - Total amount needed: ${Number(totalAmount) / Number(PAS)} PAS`);
+    console.log(`   - Target new accounts: ${numNominators}`);
     console.log(`   - God account balance: ${Number(godBalance) / Number(PAS)} PAS`);
-
-    if (godBalance < totalAmount) {
-      console.error(
-        `\n❌ Insufficient balance! Need ${totalAmount / PAS} PAS but only have ${godBalance / PAS} PAS`
-      );
-      process.exit(1);
-    }
-
-    console.log(`✅ Balance check passed - sufficient funds available`);
 
     // Helper function to get account at index using hard derivation
     const getAccountAtIndex = (index: number) => {
@@ -168,37 +148,43 @@ async function main() {
         keyPair: childKeyPair,
         address: ss58Encode(childKeyPair.publicKey, 0),
         signer: getPolkadotSigner(childKeyPair.publicKey, "Sr25519", childKeyPair.sign),
-        stakeAmount: stakeAmounts[index - 1] || minNominatorBond, // Get pre-determined stake
+        index, // Store the account index
       };
     };
 
     // Function to create accounts with batch transfers
-    const createAccounts = async (from: number, to: number, batchSize = 500) => {
-      console.log(`\n📝 Creating accounts from ${from} to ${to - 1} (${to - from} accounts)...`);
-      console.log(
-        `   📊 Using batch size of ${batchSize} - estimated ${Math.ceil((to - from) / batchSize)} batches`
-      );
+    const createAccounts = async (targetCount: number, batchSize = 500) => {
+      console.log(`\n📝 Creating ${targetCount} new accounts...`);
+      console.log(`   📊 Using batch size of ${batchSize}`);
 
-      let counter = from;
+      let accountIndex = 1; // Start checking from index 1
       let createdCount = 0;
       let skippedCount = 0;
+      let totalStakeAmount = 0n;
 
-      while (counter < to) {
+      while (createdCount < targetCount) {
         const batch = [];
 
         // Build batch of transfers
-        while (batch.length < batchSize && counter < to) {
-          const account = getAccountAtIndex(counter);
+        while (batch.length < batchSize && createdCount < targetCount) {
+          const account = getAccountAtIndex(accountIndex);
 
           // Check if account already exists
           const accountInfo = await api.query.System.Account.getValue(account.address);
           const shouldCreate = accountInfo.providers === 0;
 
           if (shouldCreate) {
+            // Calculate stake for this account based on how many we've created
+            const variableAmount = (stakeRange * BigInt(createdCount % 10)) / 9n;
+            const stakeAmount = minNominatorBond + variableAmount;
+            stakeAmounts.set(accountIndex, stakeAmount);
+            createdAccountIndices.push(accountIndex);
+            totalStakeAmount += stakeAmount;
+
             // Fund with exact stake amount + fixed buffer
-            const fundingAmount = account.stakeAmount + fixedBufferPerAccount;
+            const fundingAmount = stakeAmount + fixedBufferPerAccount;
             console.log(
-              `   [${counter}] Creating ${account.address} with ${Number(fundingAmount) / Number(PAS)} PAS (stake: ${Number(account.stakeAmount) / Number(PAS)} PAS)`
+              `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(PAS)} PAS (stake: ${Number(stakeAmount) / Number(PAS)} PAS)`
             );
             // Use transfer_allow_death for creating new accounts
             const transfer = api.tx.Balances.transfer_allow_death({
@@ -208,11 +194,11 @@ async function main() {
             batch.push(transfer.decodedCall);
             createdCount++;
           } else {
-            console.log(`   [${counter}] Skipping ${account.address} (already exists)`);
+            console.log(`   [${accountIndex}] Skipping ${account.address} (already exists)`);
             skippedCount++;
           }
 
-          counter++;
+          accountIndex++;
         }
 
         // Execute batch if we have transfers
@@ -221,7 +207,7 @@ async function main() {
             console.log(`\n🔍 DRY RUN: Would execute batch of ${batch.length} transfers`);
           } else {
             console.log(
-              `\n⚡ Executing batch of ${batch.length} transfers (${createdCount + skippedCount}/${to - from} accounts processed)...`
+              `\n⚡ Executing batch of ${batch.length} transfers (${createdCount}/${targetCount} new accounts created so far)...`
             );
 
             // Use utility.batch_all for multiple transfers (batch_all fails all if one fails)
@@ -296,16 +282,37 @@ async function main() {
         }
       }
 
-      console.log(`\n📊 Summary:`);
-      console.log(`   - Accounts created: ${createdCount}`);
-      console.log(`   - Accounts skipped: ${skippedCount}`);
+      console.log(`\n📊 Account Creation Summary:`);
+      console.log(`   - New accounts created: ${createdCount}`);
+      console.log(`   - Existing accounts skipped: ${skippedCount}`);
+      console.log(`   - Account indices used: ${createdAccountIndices.join(", ")}`);
+
+      // Now check if we have enough balance
+      const totalFixedBuffer = fixedBufferPerAccount * BigInt(createdCount);
+      const totalAmount = totalStakeAmount + totalFixedBuffer;
+
+      console.log(`\n💸 Final funding requirements:`);
+      console.log(`   - Total stake amount: ${Number(totalStakeAmount) / Number(PAS)} PAS`);
+      console.log(`   - Total fixed buffer: ${Number(totalFixedBuffer) / Number(PAS)} PAS`);
+      console.log(`   - Total amount needed: ${Number(totalAmount) / Number(PAS)} PAS`);
+
+      if (godBalance < totalAmount) {
+        console.error(
+          `\n❌ Insufficient balance! Need ${totalAmount / PAS} PAS but only have ${godBalance / PAS} PAS`
+        );
+        process.exit(1);
+      }
+
+      console.log(`✅ Balance check passed - sufficient funds available`);
 
       return { createdCount, skippedCount };
     };
 
     // Function to stake and nominate
-    const stakeAndNominate = async (from: number, to: number, batchSize = 25) => {
-      console.log(`\n🥩 Starting staking and nomination for accounts ${from} to ${to - 1}...`);
+    const stakeAndNominate = async (batchSize = 25) => {
+      console.log(
+        `\n🥩 Starting staking and nomination for ${createdAccountIndices.length} accounts...`
+      );
 
       // First, get the list of all validators
       const validatorEntries = await api.query.Staking.Validators.getEntries();
@@ -320,15 +327,20 @@ async function main() {
 
       console.log(`📊 Found ${allValidators.length} validators on chain`);
 
-      let counter = from;
+      let processedIndex = 0;
       let stakedCount = 0;
       let skippedCount = 0;
 
-      while (counter < to) {
+      while (processedIndex < createdAccountIndices.length) {
         const batch = [];
 
-        while (batch.length < batchSize && counter < to) {
-          const account = getAccountAtIndex(counter);
+        while (batch.length < batchSize && processedIndex < createdAccountIndices.length) {
+          const accountIndex = createdAccountIndices[processedIndex];
+          if (accountIndex === undefined) {
+            processedIndex++;
+            continue;
+          }
+          const account = getAccountAtIndex(accountIndex);
 
           // Check if account is already bonded
           const ledger = await api.query.Staking.Ledger.getValue(account.address);
@@ -343,22 +355,22 @@ async function main() {
             const accountInfo = await api.query.System.Account.getValue(account.address);
             const availableBalance = accountInfo.data.free;
 
-            // Use pre-determined stake amount
-            const stakeAmount = account.stakeAmount;
+            // Use pre-determined stake amount from the Map
+            const stakeAmount = stakeAmounts.get(accountIndex) || minNominatorBond;
 
             // Ensure account has sufficient balance (stake + ED + fees buffer)
             const requiredBalance = stakeAmount + existentialDeposit + txFeeBuffer;
             if (availableBalance < requiredBalance) {
               console.log(
-                `   [${counter}] Skipping ${account.address} - insufficient balance (has ${Number(availableBalance) / Number(PAS)} PAS, needs ${Number(requiredBalance) / Number(PAS)} PAS)`
+                `   [${accountIndex}] Skipping ${account.address} - insufficient balance (has ${Number(availableBalance) / Number(PAS)} PAS, needs ${Number(requiredBalance) / Number(PAS)} PAS)`
               );
               skippedCount++;
-              counter++;
+              processedIndex++;
               continue;
             }
 
             console.log(
-              `   [${counter}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
+              `   [${accountIndex}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
             );
 
             // Select random validators
@@ -379,7 +391,7 @@ async function main() {
             // Ensure we have validators to nominate
             if (selectedValidators.length === 0) {
               console.error(
-                `   [${counter}] No validators selected for ${account.address}, skipping`
+                `   [${accountIndex}] No validators selected for ${account.address}, skipping`
               );
               continue;
             }
@@ -405,12 +417,12 @@ async function main() {
             stakedCount++;
           } else {
             console.log(
-              `   [${counter}] Skipping ${account.address} (already bonded: ${isBonded}, nominator: ${isNominator})`
+              `   [${accountIndex}] Skipping ${account.address} (already bonded: ${isBonded}, nominator: ${isNominator})`
             );
             skippedCount++;
           }
 
-          counter++;
+          processedIndex++;
         }
 
         // Execute batch if we have transactions
@@ -421,7 +433,7 @@ async function main() {
             );
           } else {
             console.log(
-              `\n⚡ Executing batch of ${batch.length} stake+nominate operations (${stakedCount + skippedCount}/${to - from} accounts processed)...`
+              `\n⚡ Executing batch of ${batch.length} stake+nominate operations (${stakedCount + skippedCount}/${createdAccountIndices.length} accounts processed)...`
             );
 
             // Execute transactions in parallel
@@ -496,17 +508,17 @@ async function main() {
       console.log(`   To execute real transactions, run without --dry-run flag`);
 
       // Simulate what would happen
-      await createAccounts(1, numNominators + 1, 10);
+      await createAccounts(numNominators, 10);
 
       // Simulate staking
-      await stakeAndNominate(1, numNominators + 1, 5);
+      await stakeAndNominate(5);
     } else {
       console.log(`\n⚠️  READY TO EXECUTE REAL TRANSACTIONS`);
       console.log(`   This will transfer real funds on Paseo testnet!`);
 
-      await createAccounts(1, numNominators + 1, 500);
+      await createAccounts(numNominators, 500);
 
-      await stakeAndNominate(1, numNominators + 1, 25);
+      await stakeAndNominate(25);
     }
   } catch (error) {
     console.error("❌ Error:", error);
