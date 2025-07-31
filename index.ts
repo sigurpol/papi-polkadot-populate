@@ -25,6 +25,9 @@ program
     "Number of validators each nominator selects",
     "16"
   )
+  .option("--topup <number>", "Top up accounts to specified PAS amount")
+  .option("--from <number>", "Starting account index for topup (inclusive)")
+  .option("--to <number>", "Ending account index for topup (exclusive)")
   .option("--dry-run", "Show what would happen without executing transactions")
   .parse(process.argv);
 
@@ -37,12 +40,41 @@ async function main() {
   const validatorsPerNominator = parseInt(options.validatorsPerNominator);
   const isDryRun = options.dryRun || false;
 
-  console.log("🚀 Starting PAPI Polkadot Populate");
-  console.log(`📊 Configuration:`);
-  // console.log(`   - God account seed: ${godSeed.substring(0, 10)}...`);
-  console.log(`   - Number of nominators: ${numNominators}`);
-  console.log(`   - Validators per nominator: ${validatorsPerNominator}`);
-  console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
+  // Topup mode options
+  const topupAmount = options.topup ? parseFloat(options.topup) : null;
+  const fromIndex = options.from ? parseInt(options.from) : null;
+  const toIndex = options.to ? parseInt(options.to) : null;
+
+  // Determine operation mode
+  const isTopupMode = topupAmount !== null;
+
+  if (isTopupMode) {
+    // Validate topup options
+    if (fromIndex === null || toIndex === null) {
+      console.error("❌ Error: --topup requires both --from and --to options");
+      console.error("   Example: --topup 250 --from 3 --to 32");
+      process.exit(1);
+    }
+
+    if (fromIndex >= toIndex) {
+      console.error("❌ Error: --from must be less than --to");
+      process.exit(1);
+    }
+
+    console.log("🚀 Starting PAPI Polkadot Populate - TOPUP MODE");
+    console.log(`📊 Configuration:`);
+    console.log(`   - Topup amount: ${topupAmount} PAS`);
+    console.log(
+      `   - Account range: ///${fromIndex} to ///${toIndex - 1} (${toIndex - fromIndex} accounts)`
+    );
+    console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
+  } else {
+    console.log("🚀 Starting PAPI Polkadot Populate");
+    console.log(`📊 Configuration:`);
+    console.log(`   - Number of nominators: ${numNominators}`);
+    console.log(`   - Validators per nominator: ${validatorsPerNominator}`);
+    console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
+  }
 
   if (!isDryRun) {
     console.log("⚠️  WARNING: This will execute REAL transactions on Paseo testnet!");
@@ -494,8 +526,193 @@ async function main() {
       return { stakedCount, skippedCount };
     };
 
-    // Execute account creation
-    if (isDryRun) {
+    // Topup function
+    const topupAccounts = async (
+      topupAmountPAS: number,
+      fromIndex: number,
+      toIndex: number,
+      batchSize = 500
+    ) => {
+      const topupAmountPlanck = (PAS * BigInt(Math.floor(topupAmountPAS * 100))) / 100n; // Convert to planck with precision
+
+      console.log(
+        `\n💰 Starting topup to ${topupAmountPAS} PAS for accounts ${fromIndex} to ${toIndex - 1}...`
+      );
+
+      let accountsToTopup: {
+        index: number;
+        address: string;
+        currentBalance: bigint;
+        topupAmount: bigint;
+      }[] = [];
+      let totalTopupNeeded = 0n;
+
+      // First pass: check all account balances and calculate what's needed
+      console.log(`\n🔍 Checking account balances...`);
+      for (let i = fromIndex; i < toIndex; i++) {
+        const account = getAccountAtIndex(i);
+        const accountInfo = await api.query.System.Account.getValue(account.address);
+        const currentBalance = accountInfo.data.free;
+
+        if (currentBalance < topupAmountPlanck) {
+          const topupAmount = topupAmountPlanck - currentBalance;
+          accountsToTopup.push({
+            index: i,
+            address: account.address,
+            currentBalance,
+            topupAmount,
+          });
+          totalTopupNeeded += topupAmount;
+          console.log(
+            `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → needs ${Number(topupAmount) / Number(PAS)} PAS topup`
+          );
+        } else {
+          console.log(
+            `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → no topup needed`
+          );
+        }
+      }
+
+      console.log(`\n💸 Topup Summary:`);
+      console.log(`   - Accounts needing topup: ${accountsToTopup.length}`);
+      console.log(
+        `   - Accounts already sufficient: ${toIndex - fromIndex - accountsToTopup.length}`
+      );
+      console.log(`   - Total topup needed: ${Number(totalTopupNeeded) / Number(PAS)} PAS`);
+      console.log(`   - God account balance: ${Number(godBalance) / Number(PAS)} PAS`);
+
+      if (totalTopupNeeded === 0n) {
+        console.log(`✅ All accounts already have sufficient balance - nothing to do`);
+        return { toppedUpCount: 0, skippedCount: toIndex - fromIndex };
+      }
+
+      if (godBalance < totalTopupNeeded) {
+        console.error(
+          `\n❌ Insufficient balance! Need ${Number(totalTopupNeeded) / Number(PAS)} PAS but only have ${Number(godBalance) / Number(PAS)} PAS`
+        );
+        process.exit(1);
+      }
+
+      if (isDryRun) {
+        console.log(`\n🔍 DRY RUN: Would execute ${accountsToTopup.length} topup transfers`);
+        return {
+          toppedUpCount: accountsToTopup.length,
+          skippedCount: toIndex - fromIndex - accountsToTopup.length,
+        };
+      }
+
+      // Execute topups in batches
+      let processedCount = 0;
+      let counter = 0;
+
+      while (counter < accountsToTopup.length) {
+        const batch = [];
+
+        while (batch.length < batchSize && counter < accountsToTopup.length) {
+          const accountToTopup = accountsToTopup[counter];
+          if (!accountToTopup) {
+            counter++;
+            continue;
+          }
+          console.log(
+            `   [${accountToTopup.index}] Topping up ${accountToTopup.address} with ${Number(accountToTopup.topupAmount) / Number(PAS)} PAS`
+          );
+
+          const transfer = api.tx.Balances.transfer_keep_alive({
+            dest: MultiAddress.Id(accountToTopup.address),
+            value: accountToTopup.topupAmount,
+          });
+          batch.push(transfer.decodedCall);
+          counter++;
+        }
+
+        if (batch.length > 0) {
+          console.log(`\n⚡ Executing batch of ${batch.length} topup transfers...`);
+
+          const batchTx = api.tx.Utility.batch_all({ calls: batch });
+
+          await new Promise((resolve, reject) => {
+            let completed = false;
+            let subscription: { unsubscribe: () => void } | null = null;
+
+            const timeout = setTimeout(() => {
+              if (!completed) {
+                completed = true;
+                console.log(`   ⚠️ Transaction timeout, but may have succeeded`);
+                if (subscription) {
+                  try {
+                    subscription.unsubscribe();
+                  } catch {}
+                }
+                resolve(null);
+              }
+            }, 30000);
+
+            subscription = batchTx.signSubmitAndWatch(godSigner).subscribe({
+              next: (event) => {
+                console.log(`   📡 Event: ${event.type}`);
+                if (event.type === "txBestBlocksState") {
+                  console.log(`   ✅ Batch included in block`);
+                  console.log(`   📋 Transaction hash: ${event.txHash}`);
+                  console.log(`   🔗 https://paseo.subscan.io/extrinsic/${event.txHash}`);
+                  console.log(`   ✅ Transaction included in block - should be successful`);
+
+                  if (!completed) {
+                    completed = true;
+                    clearTimeout(timeout);
+                    if (subscription) {
+                      try {
+                        subscription.unsubscribe();
+                      } catch {}
+                    }
+                    resolve(null);
+                  }
+                }
+              },
+              error: (error) => {
+                if (!completed) {
+                  completed = true;
+                  clearTimeout(timeout);
+                  console.error(`   ❌ Batch failed:`, error);
+                  if (subscription) {
+                    try {
+                      subscription.unsubscribe();
+                    } catch {}
+                  }
+                  reject(error);
+                }
+              },
+              complete() {
+                if (!completed) {
+                  completed = true;
+                  clearTimeout(timeout);
+                  console.log(`   ✅ Batch completed`);
+                  if (subscription) {
+                    try {
+                      subscription.unsubscribe();
+                    } catch {}
+                  }
+                  resolve(null);
+                }
+              },
+            });
+          });
+
+          processedCount += batch.length;
+        }
+      }
+
+      console.log(`\n📊 Topup Complete:`);
+      console.log(`   - Accounts topped up: ${processedCount}`);
+      console.log(`   - Accounts skipped: ${toIndex - fromIndex - processedCount}`);
+
+      return { toppedUpCount: processedCount, skippedCount: toIndex - fromIndex - processedCount };
+    };
+
+    // Execute operations based on mode
+    if (isTopupMode) {
+      await topupAccounts(topupAmount!, fromIndex!, toIndex!);
+    } else if (isDryRun) {
       console.log(`\n🚧 DRY RUN MODE - No real transactions will be executed`);
       console.log(`   To execute real transactions, run without --dry-run flag`);
 
