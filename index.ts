@@ -659,50 +659,132 @@ function validateAndProcessSeed(godSeed: string): {
   return { miniSecret, derive, godKeyPair, godSigner };
 }
 
-async function main() {
-  // Parse options
-  const godSeed = options.seed;
-  const numNominators = parseInt(options.nominators);
-  const validatorsPerNominator = parseInt(options.validatorsPerNominator);
-  const isDryRun = options.dryRun || false;
+// Function to handle topup mode execution
+async function executeTopupMode(
+  api: TypedApi,
+  godSigner: Signer,
+  derive: DeriveFunction,
+  topupAmount: number,
+  fromIndex: number,
+  toIndex: number,
+  godBalance: bigint,
+  PAS: bigint,
+  isDryRun: boolean
+) {
+  await topupAccounts(
+    api,
+    godSigner,
+    derive,
+    topupAmount,
+    fromIndex,
+    toIndex,
+    godBalance,
+    PAS,
+    isDryRun
+  );
+}
 
-  // Top-up mode options
-  const topupAmount = options.topup ? parseFloat(options.topup) : null;
-  const fromIndex = options.from ? parseInt(options.from) : null;
-  const toIndex = options.to ? parseInt(options.to) : null;
+// Function to handle dry-run mode execution
+async function createNominatorsDryRun(
+  api: TypedApi,
+  godSigner: Signer,
+  derive: DeriveFunction,
+  numNominators: number,
+  minNominatorBond: bigint,
+  stakeRange: bigint,
+  fixedBufferPerAccount: bigint,
+  stakeAmounts: Map<number, bigint>,
+  createdAccountIndices: number[],
+  validatorsPerNominator: number,
+  PAS: bigint,
+  isDryRun: boolean
+) {
+  console.log(`\n🚧 DRY RUN MODE - No real transactions will be executed`);
+  console.log(`   To execute real transactions, run without --dry-run flag`);
 
-  // Determine operation mode
-  const isTopupMode = topupAmount !== null;
+  // Simulate what would happen
+  await createAccounts(
+    api,
+    godSigner,
+    derive,
+    numNominators,
+    minNominatorBond,
+    stakeRange,
+    fixedBufferPerAccount,
+    stakeAmounts,
+    createdAccountIndices,
+    PAS,
+    isDryRun,
+    10
+  );
 
-  if (isTopupMode) {
-    // Validate top-up options
-    if (fromIndex === null || toIndex === null) {
-      console.error("❌ Error: --topup requires both --from and --to options");
-      console.error("   Example: --topup 250 --from 3 --to 32");
-      process.exit(1);
-    }
+  // Simulate staking
+  await stakeAndNominate(
+    api,
+    derive,
+    createdAccountIndices,
+    stakeAmounts,
+    minNominatorBond,
+    validatorsPerNominator,
+    PAS,
+    isDryRun,
+    5
+  );
+}
 
-    if (fromIndex >= toIndex) {
-      console.error("❌ Error: --from must be less than --to");
-      process.exit(1);
-    }
+// Function to handle normal execution mode
+async function createNominators(
+  api: TypedApi,
+  godSigner: Signer,
+  derive: DeriveFunction,
+  numNominators: number,
+  minNominatorBond: bigint,
+  stakeRange: bigint,
+  fixedBufferPerAccount: bigint,
+  stakeAmounts: Map<number, bigint>,
+  createdAccountIndices: number[],
+  validatorsPerNominator: number,
+  PAS: bigint,
+  isDryRun: boolean
+) {
+  console.log(`\n⚠️  READY TO EXECUTE REAL TRANSACTIONS`);
+  console.log(`   This will transfer real funds on Paseo testnet!`);
 
-    console.log("🚀 Starting PAPI Polkadot Populate - TOPUP MODE");
-    console.log(`📊 Configuration:`);
-    console.log(`   - Top-up amount: ${topupAmount} PAS`);
-    console.log(
-      `   - Account range: ///${fromIndex} to ///${toIndex - 1} (${toIndex - fromIndex} accounts)`
-    );
-    console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
-  } else {
-    console.log("🚀 Starting PAPI Polkadot Populate");
-    console.log(`📊 Configuration:`);
-    console.log(`   - Number of nominators: ${numNominators}`);
-    console.log(`   - Validators per nominator: ${validatorsPerNominator}`);
-    console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
-  }
+  await createAccounts(
+    api,
+    godSigner,
+    derive,
+    numNominators,
+    minNominatorBond,
+    stakeRange,
+    fixedBufferPerAccount,
+    stakeAmounts,
+    createdAccountIndices,
+    PAS,
+    isDryRun,
+    500
+  );
 
-  if (!isDryRun) {
+  // Delay to allow balance updates to be available for staking
+  console.log(`\n⏳ Waiting 15 seconds for balance availability...`);
+  await new Promise((resolve) => setTimeout(resolve, 15000));
+
+  await stakeAndNominate(
+    api,
+    derive,
+    createdAccountIndices,
+    stakeAmounts,
+    minNominatorBond,
+    validatorsPerNominator,
+    PAS,
+    isDryRun,
+    25
+  );
+}
+
+// Common setup function for both modes
+async function setupApiAndConnection(godSeed: string) {
+  if (!options.dryRun) {
     console.log("⚠️  WARNING: This will execute REAL transactions on Paseo testnet!");
     console.log("   Use --dry-run flag to test without executing transactions");
   }
@@ -717,23 +799,91 @@ async function main() {
   // Get the safely typed API
   const api = client.getTypedApi(paseo);
 
+  console.log("✅ Connected to Paseo testnet");
+
+  // Get the god account address in SS58 format (Paseo uses prefix 0)
+  const godAddress = ss58Encode(godKeyPair.publicKey, 0);
+  console.log(`🔑 God account address: ${godAddress}`);
+
+  // Define PAS constant
+  const PAS = 10_000_000_000n; // 1 PAS = 10^10 planck (same as DOT)
+
+  // Check god account balance
+  const accountInfo = await api.query.System.Account.getValue(godAddress);
+  const godBalance = accountInfo.data.free;
+  console.log(
+    `💰 God account balance: ${godBalance} (${Number(godBalance) / Number(PAS)} PAS) free, ${accountInfo.data.reserved} (${Number(accountInfo.data.reserved) / Number(PAS)} PAS) reserved`
+  );
+
+  return { api, derive, godKeyPair, godSigner, godAddress, godBalance, PAS, smoldot, client };
+}
+
+// Complete topup mode execution
+async function executeCompleteTopupMode(
+  topupAmount: number,
+  fromIndex: number,
+  toIndex: number,
+  isDryRun: boolean,
+  godSeed: string
+) {
+  // Validate topup options
+  if (fromIndex >= toIndex) {
+    console.error("❌ Error: --from must be less than --to");
+    process.exit(1);
+  }
+
+  console.log("🚀 Starting PAPI Polkadot Populate - TOPUP MODE");
+  console.log(`📊 Configuration:`);
+  console.log(`   - Topup amount: ${topupAmount} PAS`);
+  console.log(
+    `   - Account range: ///${fromIndex} to ///${toIndex - 1} (${toIndex - fromIndex} accounts)`
+  );
+  console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
+
+  const { api, derive, godSigner, godBalance, PAS, smoldot, client } =
+    await setupApiAndConnection(godSeed);
+
   try {
-    console.log("✅ Connected to Paseo testnet");
-
-    // Get the god account address in SS58 format (Paseo uses prefix 0)
-    const godAddress = ss58Encode(godKeyPair.publicKey, 0);
-    console.log(`🔑 God account address: ${godAddress}`);
-
-    // Define PAS constant
-    const PAS = 10_000_000_000n; // 1 PAS = 10^10 planck (same as DOT)
-
-    // Check god account balance
-    const accountInfo = await api.query.System.Account.getValue(godAddress);
-    const godBalance = accountInfo.data.free;
-    console.log(
-      `💰 God account balance: ${godBalance} (${Number(godBalance) / Number(PAS)} PAS) free, ${accountInfo.data.reserved} (${Number(accountInfo.data.reserved) / Number(PAS)} PAS) reserved`
+    await executeTopupMode(
+      api,
+      godSigner,
+      derive,
+      topupAmount,
+      fromIndex,
+      toIndex,
+      godBalance,
+      PAS,
+      isDryRun
     );
+  } finally {
+    // Clean up connections gracefully
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Give time for pending operations
+      client.destroy();
+      smoldot.terminate();
+    } catch {
+      // Ignore cleanup errors - they're not critical
+    }
+  }
+}
 
+// Complete populate mode execution
+async function executeCompletePopulateMode(
+  numNominators: number,
+  validatorsPerNominator: number,
+  isDryRun: boolean,
+  godSeed: string
+) {
+  console.log("🚀 Starting PAPI Polkadot Populate");
+  console.log(`📊 Configuration:`);
+  console.log(`   - Number of nominators: ${numNominators}`);
+  console.log(`   - Validators per nominator: ${validatorsPerNominator}`);
+  console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
+
+  const { api, derive, godSigner, godBalance, PAS, smoldot, client } =
+    await setupApiAndConnection(godSeed);
+
+  try {
     // Calculate funding requirements and check balance immediately
     // Get MinNominatorStakingBond from storage
     const minNominatorBond = await api.query.Staking.MinNominatorBond.getValue();
@@ -762,56 +912,24 @@ async function main() {
     console.log(`   - Target new accounts: ${numNominators}`);
     console.log(`   - God account balance: ${Number(godBalance) / Number(PAS)} PAS`);
 
-    // Execute operations based on mode
-    if (isTopupMode) {
-      await topupAccounts(
+    // Execute based on dry-run vs normal mode
+    if (isDryRun) {
+      await createNominatorsDryRun(
         api,
         godSigner,
         derive,
-        topupAmount!,
-        fromIndex!,
-        toIndex!,
-        godBalance,
+        numNominators,
+        minNominatorBond,
+        stakeRange,
+        fixedBufferPerAccount,
+        stakeAmounts,
+        createdAccountIndices,
+        validatorsPerNominator,
         PAS,
         isDryRun
       );
-    } else if (isDryRun) {
-      console.log(`\n🚧 DRY RUN MODE - No real transactions will be executed`);
-      console.log(`   To execute real transactions, run without --dry-run flag`);
-
-      // Simulate what would happen
-      await createAccounts(
-        api,
-        godSigner,
-        derive,
-        numNominators,
-        minNominatorBond,
-        stakeRange,
-        fixedBufferPerAccount,
-        stakeAmounts,
-        createdAccountIndices,
-        PAS,
-        isDryRun,
-        10
-      );
-
-      // Simulate staking
-      await stakeAndNominate(
-        api,
-        derive,
-        createdAccountIndices,
-        stakeAmounts,
-        minNominatorBond,
-        validatorsPerNominator,
-        PAS,
-        isDryRun,
-        5
-      );
     } else {
-      console.log(`\n⚠️  READY TO EXECUTE REAL TRANSACTIONS`);
-      console.log(`   This will transfer real funds on Paseo testnet!`);
-
-      await createAccounts(
+      await createNominators(
         api,
         godSigner,
         derive,
@@ -821,29 +939,11 @@ async function main() {
         fixedBufferPerAccount,
         stakeAmounts,
         createdAccountIndices,
-        PAS,
-        isDryRun,
-        500
-      );
-
-      // Delay to allow balance updates to be available for staking
-      console.log(`\n⏳ Waiting 15 seconds for balance availability...`);
-      await new Promise((resolve) => setTimeout(resolve, 15000));
-
-      await stakeAndNominate(
-        api,
-        derive,
-        createdAccountIndices,
-        stakeAmounts,
-        minNominatorBond,
         validatorsPerNominator,
         PAS,
-        isDryRun,
-        25
+        isDryRun
       );
     }
-  } catch (error) {
-    console.error("❌ Error:", error);
   } finally {
     // Clean up connections gracefully
     try {
@@ -853,6 +953,37 @@ async function main() {
     } catch {
       // Ignore cleanup errors - they're not critical
     }
+  }
+}
+
+async function main() {
+  // Parse options
+  const godSeed = options.seed;
+  const numNominators = parseInt(options.nominators);
+  const validatorsPerNominator = parseInt(options.validatorsPerNominator);
+  const isDryRun = options.dryRun || false;
+
+  // Top-up mode options
+  const topupAmount = options.topup ? parseFloat(options.topup) : null;
+  const fromIndex = options.from ? parseInt(options.from) : null;
+  const toIndex = options.to ? parseInt(options.to) : null;
+
+  // Determine operation mode
+  const isTopupMode = topupAmount !== null;
+
+  if (isTopupMode) {
+    // Validate top-up options
+    if (fromIndex === null || toIndex === null) {
+      console.error("❌ Error: --topup requires both --from and --to options");
+      console.error("   Example: --topup 250 --from 3 --to 32");
+      process.exit(1);
+    }
+
+    // Execute complete topup mode end-to-end
+    await executeCompleteTopupMode(topupAmount, fromIndex, toIndex, isDryRun, godSeed);
+  } else {
+    // Execute complete populate mode end-to-end
+    await executeCompletePopulateMode(numNominators, validatorsPerNominator, isDryRun, godSeed);
   }
 }
 
