@@ -142,6 +142,9 @@ The tool supports comprehensive nomination pool operations, including pool creat
 - `--pool-stake <number>` - Initial stake amount for each pool in PAS (optional, uses chain MinCreateBond if not specified)
 - `--member-stake <number>` - Stake amount for each pool member in PAS (optional, uses chain MinJoinBond if not specified)
 - `--pool-commission <number>` - Commission percentage for pools (0-100, default: 10)
+- `--list-pools` - List all pools created by this tool (shows members)
+- `--remove-from-pool <poolId:members>` - Remove members from a pool (e.g., '10:addr1,addr2' or '10:all')
+- `--destroy-pools <range>` - Destroy pools created by this tool (e.g., '1-5' or '3,7,9')
 - `--dry-run` - Show detailed analysis without executing transactions
 
 ### Pool Account Organization
@@ -200,6 +203,50 @@ bun run index.ts --seed "your seed phrase" --nominators 10 --pools 3 --pool-memb
 ```bash
 bun run index.ts --seed "your seed phrase" --pools 10 --pool-members 100 --hybrid-stakers 20 --pool-stake 500 --member-stake 25
 ```
+
+### Pool Management Examples
+
+**List all pools you've created (with members):**
+
+```bash
+bun run index.ts --seed "your seed phrase" --list-pools
+```
+
+**Remove members from a pool:**
+
+```bash
+# Remove specific members from pool 10
+bun run index.ts --seed "your seed phrase" --remove-from-pool "10:addr1,addr2"
+
+# Remove all controllable members from pool 10
+bun run index.ts --seed "your seed phrase" --remove-from-pool "10:all"
+
+# Dry run to see what would happen
+bun run index.ts --seed "your seed phrase" --remove-from-pool "10:all" --dry-run
+```
+
+**Destroy specific pools:**
+
+```bash
+# Destroy pools 1, 2, and 3
+bun run index.ts --seed "your seed phrase" --destroy-pools "1-3"
+
+# Destroy specific pool IDs
+bun run index.ts --seed "your seed phrase" --destroy-pools "5,8,12"
+
+# Mixed range and specific IDs
+bun run index.ts --seed "your seed phrase" --destroy-pools "1-3,7,10-12"
+
+# Dry run to see what would be destroyed
+bun run index.ts --seed "your seed phrase" --destroy-pools "1-5" --dry-run
+```
+
+**Important Notes:**
+
+- Pools can only be destroyed after all members have left
+- Members must unbond first, wait for the unbonding period (28 days on Paseo), then withdraw
+- The `--remove-from-pool` command handles both unbonding and withdrawing
+- You can only control members created by this tool with the same seed
 
 ### Dry-Run Mode for Pools
 
