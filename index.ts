@@ -902,12 +902,32 @@ async function createPoolsDryRun(
   console.log(`   - Each pool initial stake: ${Number(poolStake) / Number(PAS)} PAS`);
   console.log(`   - Commission rate: ${commission}%`);
 
-  const poolAccounts = [];
+  const poolAccounts: Array<{ keyPair: any; address: string; signer: Signer; index: number }> = [];
   let totalFunding = 0n;
 
+  let poolIndex = 1;
   for (let i = 1; i <= poolCount; i++) {
-    const poolAccount = getPoolAccountAtIndex(i, derive);
+    let poolAccount: { keyPair: any; address: string; signer: Signer; index: number };
+    let isPoolMember = true;
+
+    // Find an account that's not already a pool member
+    do {
+      poolAccount = getPoolAccountAtIndex(poolIndex, derive);
+      const poolMemberInfo = await api.query.NominationPools.PoolMembers.getValue(
+        poolAccount.address
+      );
+      isPoolMember = poolMemberInfo !== undefined;
+
+      if (isPoolMember) {
+        console.log(
+          `   [Pool ${i}] Account ${poolAccount.address} (index ${poolIndex}) already belongs to a pool - trying next`
+        );
+        poolIndex++;
+      }
+    } while (isPoolMember);
+
     poolAccounts.push(poolAccount);
+    poolIndex++; // Move to next index for next pool
 
     // Check if account exists
     const accountInfo = await api.query.System.Account.getValue(poolAccount.address);
@@ -1097,20 +1117,46 @@ async function createPools(
   console.log(`   📊 Using batch size of ${batchSize} for funding`);
 
   // First, fund pool creator accounts
-  const poolAccounts = [];
+  const poolAccounts: Array<{ keyPair: any; address: string; signer: Signer; index: number }> = [];
   const fundingBatch = [];
 
+  let poolIndex = 1;
   for (let i = 1; i <= poolCount; i++) {
-    const poolAccount = getPoolAccountAtIndex(i, derive);
+    let poolAccount: { keyPair: any; address: string; signer: Signer; index: number };
+    let isPoolMember = true;
+
+    // Find an account that's not already a pool member
+    do {
+      poolAccount = getPoolAccountAtIndex(poolIndex, derive);
+      const poolMemberInfo = await api.query.NominationPools.PoolMembers.getValue(
+        poolAccount.address
+      );
+      isPoolMember = poolMemberInfo !== undefined;
+
+      if (isPoolMember) {
+        console.log(
+          `   [Pool ${i}] Account ${poolAccount.address} (index ${poolIndex}) already belongs to a pool - trying next`
+        );
+        poolIndex++;
+      }
+    } while (isPoolMember);
+
     poolAccounts.push(poolAccount);
+    console.log(`   [Pool ${i}] Selected creator ${poolAccount.address} (index ${poolIndex})`);
+    poolIndex++; // Move to next index for next pool
 
     // Check if account exists and needs funding
     const accountInfo = await api.query.System.Account.getValue(poolAccount.address);
     const exists = accountInfo.providers > 0;
 
-    if (!exists) {
-      // Fund pool creator account
-      const fundingAmount = poolStake + PAS * 5n; // stake + buffer
+    const requiredAmount = poolStake + PAS * 5n; // stake + buffer for pool creation
+    const currentBalance = accountInfo.data.free;
+    const needsFunding = !exists || currentBalance < requiredAmount;
+
+    if (needsFunding) {
+      // Fund pool creator account (either new account or insufficient balance)
+      const fundingAmount =
+        requiredAmount > currentBalance ? requiredAmount - currentBalance : requiredAmount;
       console.log(
         `   [Pool ${i}] Funding creator ${poolAccount.address} with ${Number(fundingAmount) / Number(PAS)} PAS`
       );
@@ -1209,12 +1255,20 @@ async function createPools(
 
     try {
       // Create pool with the pool account as root, nominator, and bouncer
+      console.log(`   🔧 Pool creation parameters:`);
+      console.log(`      - Amount: ${Number(poolStake) / Number(PAS)} PAS`);
+      console.log(`      - Root: ${poolAccount.address}`);
+      console.log(`      - Nominator: ${poolAccount.address}`);
+      console.log(`      - Bouncer: ${poolAccount.address}`);
+
       const createPoolTx = api.tx.NominationPools.create({
         amount: poolStake,
         root: MultiAddress.Id(poolAccount.address),
         nominator: MultiAddress.Id(poolAccount.address),
         bouncer: MultiAddress.Id(poolAccount.address),
       });
+
+      console.log(`   🔧 Transaction created, signing with pool account signer...`);
 
       // Set commission if not default (need to check if this call exists)
       let finalTx = createPoolTx;
@@ -1258,13 +1312,22 @@ async function createPools(
           next: (event: TransactionEvent) => {
             console.log(`   📡 Pool ${poolIndex} event: ${event.type}`);
             if (event.type === "txBestBlocksState") {
-              console.log(`   ✅ Pool ${poolIndex} created successfully`);
+              console.log(`   ✅ Pool ${poolIndex} transaction included in block`);
               console.log(`   📋 TX hash: ${event.txHash}`);
 
-              // Calculate pool ID based on starting count and pool index
-              const estimatedPoolId = startingPoolCount + poolIndex;
-              createdPoolIds.push(estimatedPoolId);
-              console.log(`   🆔 Pool ID: ${estimatedPoolId}`);
+              // Check for transaction success/failure events
+              if ("dispatchError" in event && event.dispatchError) {
+                console.log(`   ❌ Transaction failed with dispatch error:`, event.dispatchError);
+              } else if ("ok" in event && event.ok) {
+                console.log(`   ✅ Transaction executed successfully`);
+                // Calculate pool ID based on starting count and pool index
+                const estimatedPoolId = startingPoolCount + poolIndex;
+                createdPoolIds.push(estimatedPoolId);
+                console.log(`   🆔 Estimated Pool ID: ${estimatedPoolId}`);
+              } else {
+                console.log(`   ⚠️  Transaction status unclear`);
+                console.log(`   📋 Full event:`, JSON.stringify(event, null, 2));
+              }
 
               if (!completed) {
                 completed = true;
@@ -1312,7 +1375,9 @@ async function createPools(
     console.log(`\n🎯 Created Pool Details:`);
     createdPoolIds.forEach((poolId, index) => {
       const creatorAccount = poolAccounts[index];
-      console.log(`   Pool ${poolId}: Creator ${creatorAccount.address}`);
+      if (creatorAccount) {
+        console.log(`   Pool ${poolId}: Creator ${creatorAccount.address}`);
+      }
     });
   }
 
@@ -1444,6 +1509,10 @@ async function createPoolMembers(
       console.log(`\n🏊 Having members join pools...`);
       for (const { account, index } of memberAccountsInBatch) {
         const poolId = availablePoolIds[index % availablePoolIds.length]; // Distribute evenly
+        if (poolId === undefined) {
+          console.log(`   ❌ No pool ID available for member ${index}`);
+          continue;
+        }
         console.log(
           `   [Member ${index}] Joining pool ${poolId} with ${Number(memberStake) / Number(PAS)} PAS`
         );
