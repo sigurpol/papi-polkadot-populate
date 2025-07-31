@@ -424,7 +424,7 @@ async function stakeAndNominate(
   return { stakedCount, skippedCount };
 }
 
-// Topup function
+// Top-up function
 async function topupAccounts(
   api: TypedApi,
   godSigner: Signer,
@@ -468,19 +468,19 @@ async function topupAccounts(
       });
       totalTopupNeeded += topupAmount;
       console.log(
-        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → needs ${Number(topupAmount) / Number(PAS)} PAS topup`
+        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → needs ${Number(topupAmount) / Number(PAS)} PAS top-up`
       );
     } else {
       console.log(
-        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → no topup needed`
+        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → no top-up needed`
       );
     }
   }
 
-  console.log(`\n💸 Topup Summary:`);
-  console.log(`   - Accounts needing topup: ${accountsToTopup.length}`);
+  console.log(`\n💸 Top-up Summary:`);
+  console.log(`   - Accounts needing top-up: ${accountsToTopup.length}`);
   console.log(`   - Accounts already sufficient: ${toIndex - fromIndex - accountsToTopup.length}`);
-  console.log(`   - Total topup needed: ${Number(totalTopupNeeded) / Number(PAS)} PAS`);
+  console.log(`   - Total top-up needed: ${Number(totalTopupNeeded) / Number(PAS)} PAS`);
   console.log(`   - God account balance: ${Number(godBalance) / Number(PAS)} PAS`);
 
   if (totalTopupNeeded === 0n) {
@@ -496,14 +496,14 @@ async function topupAccounts(
   }
 
   if (isDryRun) {
-    console.log(`\n🔍 DRY RUN: Would execute ${accountsToTopup.length} topup transfers`);
+    console.log(`\n🔍 DRY RUN: Would execute ${accountsToTopup.length} top-up transfers`);
     return {
       toppedUpCount: accountsToTopup.length,
       skippedCount: toIndex - fromIndex - accountsToTopup.length,
     };
   }
 
-  // Execute topups in batches
+  // Execute top-ups in batches
   let processedCount = 0;
   let counter = 0;
 
@@ -529,7 +529,7 @@ async function topupAccounts(
     }
 
     if (batch.length > 0) {
-      console.log(`\n⚡ Executing batch of ${batch.length} topup transfers...`);
+      console.log(`\n⚡ Executing batch of ${batch.length} top-up transfers...`);
 
       const batchTx = api.tx.Utility.batch_all({ calls: batch });
 
@@ -604,7 +604,7 @@ async function topupAccounts(
     }
   }
 
-  console.log(`\n📊 Topup Complete:`);
+  console.log(`\n📊 Top-up Complete:`);
   console.log(`   - Accounts topped up: ${processedCount}`);
   console.log(`   - Accounts skipped: ${toIndex - fromIndex - processedCount}`);
 
@@ -666,7 +666,7 @@ async function main() {
   const validatorsPerNominator = parseInt(options.validatorsPerNominator);
   const isDryRun = options.dryRun || false;
 
-  // Topup mode options
+  // Top-up mode options
   const topupAmount = options.topup ? parseFloat(options.topup) : null;
   const fromIndex = options.from ? parseInt(options.from) : null;
   const toIndex = options.to ? parseInt(options.to) : null;
@@ -675,7 +675,7 @@ async function main() {
   const isTopupMode = topupAmount !== null;
 
   if (isTopupMode) {
-    // Validate topup options
+    // Validate top-up options
     if (fromIndex === null || toIndex === null) {
       console.error("❌ Error: --topup requires both --from and --to options");
       console.error("   Example: --topup 250 --from 3 --to 32");
@@ -689,7 +689,7 @@ async function main() {
 
     console.log("🚀 Starting PAPI Polkadot Populate - TOPUP MODE");
     console.log(`📊 Configuration:`);
-    console.log(`   - Topup amount: ${topupAmount} PAS`);
+    console.log(`   - Top-up amount: ${topupAmount} PAS`);
     console.log(
       `   - Account range: ///${fromIndex} to ///${toIndex - 1} (${toIndex - fromIndex} accounts)`
     );

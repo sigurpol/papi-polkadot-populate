@@ -71,11 +71,11 @@ Execute real transactions (default behavior):
 bun run index.ts --seed "your funded seed" --nominators 5
 ```
 
-## Topup Mode
+## Top-up Mode
 
-The tool also supports a topup mode to ensure accounts have a minimum balance.
+The tool also supports a top-up mode to ensure accounts have a minimum balance.
 
-### Topup Parameters
+### Top-up Parameters
 
 - `--seed <string>` - The seed phrase or hex seed of the god account
 - `--topup <number>` - Target balance in PAS (required for topup mode)
@@ -83,7 +83,7 @@ The tool also supports a topup mode to ensure accounts have a minimum balance.
 - `--to <number>` - Ending account index (exclusive, required for topup mode)
 - `--dry-run` - Show what would happen without executing transactions (optional)
 
-### Topup Examples
+### Top-up Examples
 
 Top up accounts ///3 to ///31 to have at least 250 PAS each:
 
@@ -91,7 +91,7 @@ Top up accounts ///3 to ///31 to have at least 250 PAS each:
 bun run index.ts --seed "your seed phrase" --topup 250 --from 3 --to 32
 ```
 
-Dry run to see what topups would be needed:
+Dry run to see what top-ups would be needed:
 
 ```bash
 bun run index.ts --seed "your seed phrase" --topup 250 --from 3 --to 32 --dry-run
@@ -103,7 +103,7 @@ Top up a single account (///10) to 500 PAS:
 bun run index.ts --seed "your seed phrase" --topup 500 --from 10 --to 11
 ```
 
-### Topup Behavior
+### Top-up Behavior
 
 - **Smart topup**: Only tops up accounts that have less than the target amount
 - **Precise amounts**: If account has 100 PAS and target is 250 PAS, only 150 PAS is transferred
