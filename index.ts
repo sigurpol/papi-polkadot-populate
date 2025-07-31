@@ -123,7 +123,7 @@ async function createAccounts(
         batch.push(transfer.decodedCall);
         createdCount++;
       } else {
-        console.log(`   [${accountIndex}] Skipping ${account.address} (already exists)`);
+        // console.log(`   [${accountIndex}] Skipping ${account.address} (already exists)`);
         skippedCount++;
       }
 
