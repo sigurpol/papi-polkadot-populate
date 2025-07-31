@@ -39,7 +39,7 @@ const program = new Command();
 
 program
   .name("papi-polkadot-populate")
-  .description("Populate Paseo testnet with nominators using PAPI")
+  .description("Populate Paseo testnet with nominators and nomination pools using PAPI")
   .version("1.0.0")
   .requiredOption("--seed <string>", "God account seed phrase")
   .option("--nominators <number>", "Number of nominator accounts to create", "100")
@@ -51,6 +51,22 @@ program
   .option("--topup <number>", "Top up accounts to specified PAS amount")
   .option("--from <number>", "Starting account index for topup (inclusive)")
   .option("--to <number>", "Ending account index for topup (exclusive)")
+  .option("--pools <number>", "Number of nomination pools to create", "0")
+  .option("--pool-members <number>", "Number of pool members to create", "0")
+  .option(
+    "--hybrid-stakers <number>",
+    "Number of accounts that are both pool members and solo stakers",
+    "0"
+  )
+  .option(
+    "--pool-stake <number>",
+    "Initial stake amount for each pool in PAS (uses chain MinCreateBond if not specified)"
+  )
+  .option(
+    "--member-stake <number>",
+    "Stake amount for each pool member in PAS (uses chain MinJoinBond if not specified)"
+  )
+  .option("--pool-commission <number>", "Commission percentage for pools (0-100)", "10")
   .option("--dry-run", "Show what would happen without executing transactions")
   .parse(process.argv);
 
@@ -65,6 +81,42 @@ const getAccountAtIndex = (index: number, derive: DeriveFunction) => {
     address: ss58Encode(childKeyPair.publicKey, 0),
     signer: getPolkadotSigner(childKeyPair.publicKey, "Sr25519", childKeyPair.sign),
     index, // Store the account index
+  };
+};
+
+// Helper function to get pool account at index using pool-specific derivation
+const getPoolAccountAtIndex = (index: number, derive: DeriveFunction) => {
+  // Use pool derivation path: //pool/index
+  const childKeyPair = derive(`//pool/${index}`);
+  return {
+    keyPair: childKeyPair,
+    address: ss58Encode(childKeyPair.publicKey, 0),
+    signer: getPolkadotSigner(childKeyPair.publicKey, "Sr25519", childKeyPair.sign),
+    index,
+  };
+};
+
+// Helper function to get pool member account at index using member-specific derivation
+const getPoolMemberAccountAtIndex = (index: number, derive: DeriveFunction) => {
+  // Use member derivation path: //member/index
+  const childKeyPair = derive(`//member/${index}`);
+  return {
+    keyPair: childKeyPair,
+    address: ss58Encode(childKeyPair.publicKey, 0),
+    signer: getPolkadotSigner(childKeyPair.publicKey, "Sr25519", childKeyPair.sign),
+    index,
+  };
+};
+
+// Helper function to get hybrid account at index using hybrid-specific derivation
+const getHybridAccountAtIndex = (index: number, derive: DeriveFunction) => {
+  // Use hybrid derivation path: //hybrid/index
+  const childKeyPair = derive(`//hybrid/${index}`);
+  return {
+    keyPair: childKeyPair,
+    address: ss58Encode(childKeyPair.publicKey, 0),
+    signer: getPolkadotSigner(childKeyPair.publicKey, "Sr25519", childKeyPair.sign),
+    index,
   };
 };
 
@@ -143,7 +195,7 @@ async function createAccounts(
         const batchTx = api.tx.Utility.batch_all({ calls: batch });
 
         // Sign and submit with timeout
-        await new Promise((resolve, reject) => {
+        await new Promise((resolve, _reject) => {
           let completed = false;
           let subscription: { unsubscribe: () => void } | null = null;
 
@@ -194,7 +246,7 @@ async function createAccounts(
                     subscription.unsubscribe();
                   } catch {}
                 }
-                reject(error);
+                _reject(error);
               }
             },
             complete() {
@@ -533,7 +585,7 @@ async function topupAccounts(
 
       const batchTx = api.tx.Utility.batch_all({ calls: batch });
 
-      await new Promise((resolve, reject) => {
+      await new Promise((resolve, _reject) => {
         let completed = false;
         let subscription: { unsubscribe: () => void } | null = null;
 
@@ -581,7 +633,7 @@ async function topupAccounts(
                   subscription.unsubscribe();
                 } catch {}
               }
-              reject(error);
+              _reject(error);
             }
           },
           complete() {
@@ -657,6 +709,60 @@ function validateAndProcessSeed(godSeed: string): {
   const godSigner = getPolkadotSigner(godKeyPair.publicKey, "Sr25519", godKeyPair.sign);
 
   return { miniSecret, derive, godKeyPair, godSigner };
+}
+
+// Function to fetch pool chain parameters from NominationPools pallet
+async function getPoolChainParameters(api: TypedApi, PAS: bigint) {
+  // Fetch live chain values from NominationPools pallet
+  const minCreateBond = await api.query.NominationPools.MinCreateBond.getValue();
+  const minJoinBond = await api.query.NominationPools.MinJoinBond.getValue();
+
+  // These may not exist on all chains, so handle gracefully
+  let maxPools: number | undefined;
+  let maxPoolMembers: number | undefined;
+  let counterForPoolMembers: number;
+  let counterForBondedPools: number;
+
+  try {
+    maxPools = await api.query.NominationPools.MaxPools.getValue();
+  } catch {
+    maxPools = undefined;
+  }
+
+  try {
+    maxPoolMembers = await api.query.NominationPools.MaxPoolMembers.getValue();
+  } catch {
+    maxPoolMembers = undefined;
+  }
+
+  try {
+    counterForPoolMembers = await api.query.NominationPools.CounterForPoolMembers.getValue();
+  } catch {
+    counterForPoolMembers = 0;
+  }
+
+  try {
+    counterForBondedPools = await api.query.NominationPools.CounterForBondedPools.getValue();
+  } catch {
+    counterForBondedPools = 0;
+  }
+
+  console.log(`\n🏊 Pool Chain Parameters:`);
+  console.log(`   - MinCreateBond: ${Number(minCreateBond) / Number(PAS)} PAS`);
+  console.log(`   - MinJoinBond: ${Number(minJoinBond) / Number(PAS)} PAS`);
+  console.log(`   - Current pools: ${counterForBondedPools}${maxPools ? `/${maxPools}` : ""}`);
+  console.log(
+    `   - Current members: ${counterForPoolMembers}${maxPoolMembers ? `/${maxPoolMembers}` : ""}`
+  );
+
+  return {
+    minCreateBond,
+    minJoinBond,
+    maxPools,
+    maxPoolMembers,
+    counterForPoolMembers,
+    counterForBondedPools,
+  };
 }
 
 // Function to handle topup mode execution
@@ -780,6 +886,910 @@ async function createNominators(
     isDryRun,
     25
   );
+}
+
+// Dry-run function for pool creation analysis
+async function createPoolsDryRun(
+  api: TypedApi,
+  derive: DeriveFunction,
+  poolCount: number,
+  poolStake: bigint,
+  commission: number,
+  PAS: bigint
+) {
+  console.log(`\n🔍 DRY RUN: Pool Creation Analysis`);
+  console.log(`   - Would create ${poolCount} nomination pools`);
+  console.log(`   - Each pool initial stake: ${Number(poolStake) / Number(PAS)} PAS`);
+  console.log(`   - Commission rate: ${commission}%`);
+
+  const poolAccounts = [];
+  let totalFunding = 0n;
+
+  for (let i = 1; i <= poolCount; i++) {
+    const poolAccount = getPoolAccountAtIndex(i, derive);
+    poolAccounts.push(poolAccount);
+
+    // Check if account exists
+    const accountInfo = await api.query.System.Account.getValue(poolAccount.address);
+    const exists = accountInfo.providers > 0;
+
+    const fundingNeeded = poolStake + PAS * 2n; // stake + buffer
+    totalFunding += fundingNeeded;
+
+    console.log(`   [Pool ${i}] Creator: ${poolAccount.address}`);
+    console.log(`      - Account exists: ${exists ? "Yes" : "No"}`);
+    console.log(`      - Funding needed: ${Number(fundingNeeded) / Number(PAS)} PAS`);
+    console.log(`      - Would create pool with stake: ${Number(poolStake) / Number(PAS)} PAS`);
+  }
+
+  console.log(`\n   📊 Pool Creation Summary:`);
+  console.log(`      - Total pools: ${poolCount}`);
+  console.log(`      - Total funding needed: ${Number(totalFunding) / Number(PAS)} PAS`);
+  console.log(
+    `      - Average per pool: ${Number(totalFunding / BigInt(poolCount)) / Number(PAS)} PAS`
+  );
+
+  return { poolAccounts, totalFunding };
+}
+
+// Dry-run function for pool members analysis
+async function createPoolMembersDryRun(
+  api: TypedApi,
+  derive: DeriveFunction,
+  memberCount: number,
+  memberStake: bigint,
+  availablePoolIds: number[],
+  PAS: bigint
+) {
+  console.log(`\n🔍 DRY RUN: Pool Members Analysis`);
+  console.log(`   - Would create ${memberCount} pool members`);
+  console.log(`   - Each member stake: ${Number(memberStake) / Number(PAS)} PAS`);
+  console.log(
+    `   - Available pools: ${availablePoolIds.length} (IDs: ${availablePoolIds.join(", ")})`
+  );
+
+  let memberIndex = 1;
+  let wouldCreate = 0;
+  let totalFunding = 0n;
+  const memberDistribution = new Map<number, number>();
+
+  // Initialize pool distribution tracking
+  availablePoolIds.forEach((id) => memberDistribution.set(id, 0));
+
+  for (let i = 0; i < memberCount; i++) {
+    const memberAccount = getPoolMemberAccountAtIndex(memberIndex, derive);
+
+    // Check if account exists
+    const accountInfo = await api.query.System.Account.getValue(memberAccount.address);
+    const exists = accountInfo.providers > 0;
+
+    if (!exists) {
+      const fundingNeeded = memberStake + PAS * 2n; // stake + buffer
+      totalFunding += fundingNeeded;
+
+      // Determine which pool this member would join
+      const poolId = availablePoolIds[memberIndex % availablePoolIds.length];
+      if (poolId !== undefined) {
+        memberDistribution.set(poolId, (memberDistribution.get(poolId) ?? 0) + 1);
+      }
+
+      console.log(`   [Member ${memberIndex}] ${memberAccount.address}`);
+      console.log(`      - Would fund with: ${Number(fundingNeeded) / Number(PAS)} PAS`);
+      console.log(`      - Would join pool: ${poolId}`);
+
+      wouldCreate++;
+    } else {
+      console.log(`   [Member ${memberIndex}] ${memberAccount.address} (already exists - skip)`);
+    }
+    memberIndex++;
+  }
+
+  console.log(`\n   📊 Pool Members Summary:`);
+  console.log(`      - Members to create: ${wouldCreate}`);
+  console.log(`      - Members to skip: ${memberCount - wouldCreate}`);
+  console.log(`      - Total funding needed: ${Number(totalFunding) / Number(PAS)} PAS`);
+  console.log(`      - Distribution across pools:`);
+  memberDistribution.forEach((count: number, poolId: number) => {
+    if (count > 0) {
+      console.log(`         Pool ${poolId}: ${count} members`);
+    }
+  });
+
+  return { wouldCreate, totalFunding };
+}
+
+// Dry-run function for hybrid stakers analysis
+async function createHybridStakersDryRun(
+  api: TypedApi,
+  derive: DeriveFunction,
+  hybridCount: number,
+  soloStake: bigint,
+  poolStake: bigint,
+  availablePoolIds: number[],
+  validatorsPerNominator: number,
+  PAS: bigint
+) {
+  console.log(`\n🔍 DRY RUN: Hybrid Stakers Analysis`);
+  console.log(`   - Would create ${hybridCount} hybrid stakers`);
+  console.log(`   - Solo stake per account: ${Number(soloStake) / Number(PAS)} PAS`);
+  console.log(`   - Pool stake per account: ${Number(poolStake) / Number(PAS)} PAS`);
+  console.log(`   - Validators per nominator: ${validatorsPerNominator}`);
+
+  // Get validators for analysis
+  const validatorEntries = await api.query.Staking.Validators.getEntries();
+  const allValidators = validatorEntries.map(
+    ({ keyArgs: [validator] }: { keyArgs: [string] }) => validator
+  );
+
+  console.log(`   - Available validators: ${allValidators.length}`);
+  console.log(
+    `   - Can select up to: ${Math.min(validatorsPerNominator, allValidators.length)} per account`
+  );
+
+  let wouldCreate = 0;
+  let totalFunding = 0n;
+  const hybridDistribution = new Map<number, number>();
+
+  // Initialize pool distribution tracking
+  availablePoolIds.forEach((id) => hybridDistribution.set(id, 0));
+
+  for (let i = 1; i <= hybridCount; i++) {
+    const hybridAccount = getHybridAccountAtIndex(i, derive);
+
+    // Check if account exists
+    const accountInfo = await api.query.System.Account.getValue(hybridAccount.address);
+    const exists = accountInfo.providers > 0;
+
+    if (!exists) {
+      const fundingNeeded = soloStake + poolStake + PAS * 3n; // both stakes + buffer
+      totalFunding += fundingNeeded;
+
+      // Determine which pool this hybrid would join
+      const poolId = availablePoolIds[i % availablePoolIds.length];
+      if (poolId !== undefined) {
+        hybridDistribution.set(poolId, (hybridDistribution.get(poolId) ?? 0) + 1);
+      }
+
+      console.log(`   [Hybrid ${i}] ${hybridAccount.address}`);
+      console.log(`      - Would fund with: ${Number(fundingNeeded) / Number(PAS)} PAS`);
+      console.log(`      - Would join pool: ${poolId} with ${Number(poolStake) / Number(PAS)} PAS`);
+      console.log(`      - Would solo stake: ${Number(soloStake) / Number(PAS)} PAS`);
+      console.log(
+        `      - Would nominate: ${Math.min(validatorsPerNominator, allValidators.length)} validators`
+      );
+
+      wouldCreate++;
+    } else {
+      console.log(`   [Hybrid ${i}] ${hybridAccount.address} (already exists - skip)`);
+    }
+  }
+
+  console.log(`\n   📊 Hybrid Stakers Summary:`);
+  console.log(`      - Hybrids to create: ${wouldCreate}`);
+  console.log(`      - Hybrids to skip: ${hybridCount - wouldCreate}`);
+  console.log(`      - Total funding needed: ${Number(totalFunding) / Number(PAS)} PAS`);
+  console.log(`      - Pool distribution:`);
+  hybridDistribution.forEach((count: number, poolId: number) => {
+    if (count > 0) {
+      console.log(`         Pool ${poolId}: ${count} hybrid stakers`);
+    }
+  });
+
+  return { wouldCreate, totalFunding };
+}
+
+// Function to create actual nomination pools
+async function createPools(
+  api: TypedApi,
+  godSigner: Signer,
+  derive: DeriveFunction,
+  poolCount: number,
+  poolStake: bigint,
+  commission: number,
+  createdPoolIds: number[],
+  PAS: bigint,
+  isDryRun: boolean,
+  batchSize = 10
+) {
+  console.log(`\n🏊 Creating ${poolCount} nomination pools...`);
+  console.log(`   📊 Using batch size of ${batchSize} for funding`);
+
+  // First, fund pool creator accounts
+  const poolAccounts = [];
+  const fundingBatch = [];
+
+  for (let i = 1; i <= poolCount; i++) {
+    const poolAccount = getPoolAccountAtIndex(i, derive);
+    poolAccounts.push(poolAccount);
+
+    // Check if account exists and needs funding
+    const accountInfo = await api.query.System.Account.getValue(poolAccount.address);
+    const exists = accountInfo.providers > 0;
+
+    if (!exists) {
+      // Fund pool creator account
+      const fundingAmount = poolStake + PAS * 2n; // stake + buffer
+      console.log(
+        `   [Pool ${i}] Funding creator ${poolAccount.address} with ${Number(fundingAmount) / Number(PAS)} PAS`
+      );
+
+      const transfer = api.tx.Balances.transfer_allow_death({
+        dest: MultiAddress.Id(poolAccount.address),
+        value: fundingAmount,
+      });
+      fundingBatch.push(transfer.decodedCall);
+    } else {
+      console.log(
+        `   [Pool ${i}] Creator ${poolAccount.address} already exists - skipping funding`
+      );
+    }
+  }
+
+  // Execute funding batch
+  if (!isDryRun && fundingBatch.length > 0) {
+    console.log(`\n⚡ Executing funding batch of ${fundingBatch.length} transfers...`);
+    const batchTx = api.tx.Utility.batch_all({ calls: fundingBatch });
+
+    await new Promise((resolve, reject) => {
+      let completed = false;
+      let subscription: { unsubscribe: () => void } | null = null;
+
+      const timeout = setTimeout(() => {
+        if (!completed) {
+          completed = true;
+          console.log(`   ⚠️  Funding timeout, but may have succeeded`);
+          if (subscription) {
+            try {
+              subscription.unsubscribe();
+            } catch {}
+          }
+          resolve(null);
+        }
+      }, 30000);
+
+      subscription = batchTx.signSubmitAndWatch(godSigner).subscribe({
+        next: (event: TransactionEvent) => {
+          console.log(`   📡 Event: ${event.type}`);
+          if (event.type === "txBestBlocksState") {
+            console.log(`   ✅ Funding batch included in block`);
+            console.log(`   📋 Transaction hash: ${event.txHash}`);
+            if (!completed) {
+              completed = true;
+              clearTimeout(timeout);
+              if (subscription) {
+                try {
+                  subscription.unsubscribe();
+                } catch {}
+              }
+              resolve(null);
+            }
+          }
+        },
+        error: (error: Error) => {
+          if (!completed) {
+            completed = true;
+            clearTimeout(timeout);
+            console.error(`   ❌ Funding batch failed:`, error);
+            if (subscription) {
+              try {
+                subscription.unsubscribe();
+              } catch {}
+            }
+            reject(error);
+          }
+        },
+      });
+    });
+
+    // Wait for balance updates
+    console.log(`\n⏳ Waiting 10 seconds for balance availability...`);
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+  }
+
+  // Create pools sequentially to track pool IDs properly
+  for (let i = 0; i < poolAccounts.length; i++) {
+    const poolAccount = poolAccounts[i];
+    if (!poolAccount) continue;
+
+    const poolIndex = i + 1;
+
+    if (isDryRun) {
+      console.log(`   🔍 DRY RUN: Would create pool ${poolIndex} with ${poolAccount.address}`);
+      continue;
+    }
+
+    console.log(`   [Pool ${poolIndex}] Creating pool with creator ${poolAccount.address}...`);
+
+    try {
+      // Create pool with the pool account as root, nominator, and bouncer
+      const createPoolTx = api.tx.NominationPools.create({
+        amount: poolStake,
+        root: MultiAddress.Id(poolAccount.address),
+        nominator: MultiAddress.Id(poolAccount.address),
+        bouncer: MultiAddress.Id(poolAccount.address),
+      });
+
+      // Set commission if not default (need to check if this call exists)
+      let finalTx = createPoolTx;
+      if (commission !== 0) {
+        // Try to batch with commission setting, but fall back if not available
+        try {
+          // Commission setting might be available in future - for now just note it
+          // const setCommissionTx = api.tx.NominationPools.set_commission({
+          //   pool_id: null, // Will be determined after pool creation
+          //   new_commission: [commission * 10000000, poolAccount.address], // Commission in Perbill (parts per billion)
+          // });
+
+          // For now, just create the pool and set commission separately if needed
+          finalTx = createPoolTx;
+        } catch {
+          // Commission setting might not be available or have different signature
+          console.log(
+            `   ⚠️  Commission setting not available, creating pool with default commission`
+          );
+        }
+      }
+
+      await new Promise((resolve, _reject) => {
+        let completed = false;
+        let subscription: { unsubscribe: () => void } | null = null;
+
+        const timeout = setTimeout(() => {
+          if (!completed) {
+            completed = true;
+            console.log(`   ⚠️  Pool creation timeout for pool ${poolIndex}`);
+            if (subscription) {
+              try {
+                subscription.unsubscribe();
+              } catch {}
+            }
+            resolve(null);
+          }
+        }, 30000);
+
+        subscription = finalTx.signSubmitAndWatch(poolAccount.signer).subscribe({
+          next: (event: TransactionEvent) => {
+            console.log(`   📡 Pool ${poolIndex} event: ${event.type}`);
+            if (event.type === "txBestBlocksState") {
+              console.log(`   ✅ Pool ${poolIndex} created successfully`);
+              console.log(`   📋 TX hash: ${event.txHash}`);
+
+              // TODO: Extract pool ID from events if needed
+              // For now, assume sequential pool IDs
+              // createdPoolIds.push(actualPoolId);
+
+              if (!completed) {
+                completed = true;
+                clearTimeout(timeout);
+                if (subscription) {
+                  try {
+                    subscription.unsubscribe();
+                  } catch {}
+                }
+                resolve(null);
+              }
+            }
+          },
+          error: (error: Error) => {
+            if (!completed) {
+              completed = true;
+              clearTimeout(timeout);
+              console.error(`   ❌ Pool ${poolIndex} creation failed:`, error);
+              if (subscription) {
+                try {
+                  subscription.unsubscribe();
+                } catch {}
+              }
+              // Don't reject, continue with other pools
+              resolve(null);
+            }
+          },
+        });
+      });
+
+      // Small delay between pool creations
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    } catch (error) {
+      console.error(`   ❌ Failed to create pool ${poolIndex}:`, error);
+      // Continue with next pool
+    }
+  }
+
+  console.log(`\n📊 Pool Creation Summary:`);
+  console.log(`   - Pools requested: ${poolCount}`);
+  console.log(`   - Creator accounts processed: ${poolAccounts.length}`);
+  console.log(`   - Pool creation attempts completed`);
+
+  return { createdCount: poolAccounts.length };
+}
+
+// Function to create pool members
+async function createPoolMembers(
+  api: TypedApi,
+  godSigner: Signer,
+  derive: DeriveFunction,
+  memberCount: number,
+  memberStake: bigint,
+  availablePoolIds: number[],
+  createdMemberIndices: number[],
+  PAS: bigint,
+  isDryRun: boolean,
+  batchSize = 100
+) {
+  console.log(`\n👥 Creating ${memberCount} pool members...`);
+  console.log(
+    `   📊 Available pools: ${availablePoolIds.length} (IDs: ${availablePoolIds.join(", ")})`
+  );
+
+  if (availablePoolIds.length === 0) {
+    console.error(`❌ No pools available for members to join!`);
+    return { createdCount: 0, joinedCount: 0 };
+  }
+
+  let memberIndex = 1;
+  let createdCount = 0;
+  let joinedCount = 0;
+
+  while (createdCount < memberCount) {
+    const batch = [];
+    const memberAccountsInBatch = [];
+
+    // Build funding batch
+    while (batch.length < batchSize && createdCount < memberCount) {
+      const memberAccount = getPoolMemberAccountAtIndex(memberIndex, derive);
+
+      // Check if account exists
+      const accountInfo = await api.query.System.Account.getValue(memberAccount.address);
+      const exists = accountInfo.providers > 0;
+
+      if (!exists) {
+        const fundingAmount = memberStake + PAS * 2n; // stake + buffer
+        console.log(
+          `   [Member ${memberIndex}] Funding ${memberAccount.address} with ${Number(fundingAmount) / Number(PAS)} PAS`
+        );
+
+        const transfer = api.tx.Balances.transfer_allow_death({
+          dest: MultiAddress.Id(memberAccount.address),
+          value: fundingAmount,
+        });
+        batch.push(transfer.decodedCall);
+        memberAccountsInBatch.push({ account: memberAccount, index: memberIndex });
+        createdMemberIndices.push(memberIndex);
+        createdCount++;
+      } else {
+        console.log(
+          `   [Member ${memberIndex}] ${memberAccount.address} already exists - skipping`
+        );
+      }
+      memberIndex++;
+    }
+
+    // Execute funding batch
+    if (!isDryRun && batch.length > 0) {
+      console.log(`\n⚡ Executing funding batch of ${batch.length} member transfers...`);
+      const batchTx = api.tx.Utility.batch_all({ calls: batch });
+
+      await new Promise((resolve, _reject) => {
+        let completed = false;
+        let subscription: { unsubscribe: () => void } | null = null;
+
+        const timeout = setTimeout(() => {
+          if (!completed) {
+            completed = true;
+            console.log(`   ⚠️  Member funding timeout`);
+            if (subscription) {
+              try {
+                subscription.unsubscribe();
+              } catch {}
+            }
+            resolve(null);
+          }
+        }, 30000);
+
+        subscription = batchTx.signSubmitAndWatch(godSigner).subscribe({
+          next: (event: TransactionEvent) => {
+            console.log(`   📡 Event: ${event.type}`);
+            if (event.type === "txBestBlocksState") {
+              console.log(`   ✅ Member funding batch included in block`);
+              if (!completed) {
+                completed = true;
+                clearTimeout(timeout);
+                if (subscription) {
+                  try {
+                    subscription.unsubscribe();
+                  } catch {}
+                }
+                resolve(null);
+              }
+            }
+          },
+          error: (error: Error) => {
+            if (!completed) {
+              completed = true;
+              clearTimeout(timeout);
+              console.error(`   ❌ Member funding failed:`, error);
+              if (subscription) {
+                try {
+                  subscription.unsubscribe();
+                } catch {}
+              }
+              _reject(error);
+            }
+          },
+        });
+      });
+
+      // Wait for balance updates
+      console.log(`\n⏳ Waiting 5 seconds for balance availability...`);
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      // Have members join pools
+      console.log(`\n🏊 Having members join pools...`);
+      for (const { account, index } of memberAccountsInBatch) {
+        const poolId = availablePoolIds[index % availablePoolIds.length]; // Distribute evenly
+        console.log(
+          `   [Member ${index}] Joining pool ${poolId} with ${Number(memberStake) / Number(PAS)} PAS`
+        );
+
+        try {
+          const joinTx = api.tx.NominationPools.join({
+            amount: memberStake,
+            pool_id: poolId,
+          });
+
+          await new Promise((resolve) => {
+            let completed = false;
+            let subscription: { unsubscribe: () => void } | null = null;
+
+            const timeout = setTimeout(() => {
+              if (!completed) {
+                completed = true;
+                console.log(`   ⚠️  Join timeout for member ${index}`);
+                if (subscription) {
+                  try {
+                    subscription.unsubscribe();
+                  } catch {}
+                }
+                resolve(null);
+              }
+            }, 20000);
+
+            subscription = joinTx.signSubmitAndWatch(account.signer).subscribe({
+              next: (event: TransactionEvent) => {
+                if (event.type === "txBestBlocksState") {
+                  console.log(`   ✅ Member ${index} joined pool ${poolId}`);
+                  joinedCount++;
+                  if (!completed) {
+                    completed = true;
+                    clearTimeout(timeout);
+                    if (subscription) {
+                      try {
+                        subscription.unsubscribe();
+                      } catch {}
+                    }
+                    resolve(null);
+                  }
+                }
+              },
+              error: (error: Error) => {
+                if (!completed) {
+                  completed = true;
+                  clearTimeout(timeout);
+                  console.error(`   ❌ Member ${index} join failed:`, error);
+                  if (subscription) {
+                    try {
+                      subscription.unsubscribe();
+                    } catch {}
+                  }
+                  resolve(null); // Continue with other members
+                }
+              },
+            });
+          });
+
+          // Small delay between joins
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        } catch (error) {
+          console.error(`   ❌ Failed to join pool for member ${index}:`, error);
+        }
+      }
+    } else if (isDryRun && batch.length > 0) {
+      console.log(`\n🔍 DRY RUN: Would execute funding batch of ${batch.length} members`);
+      for (const { index } of memberAccountsInBatch) {
+        const poolId = availablePoolIds[index % availablePoolIds.length];
+        console.log(`   🔍 DRY RUN: Member ${index} would join pool ${poolId}`);
+      }
+    }
+  }
+
+  console.log(`\n📊 Pool Members Summary:`);
+  console.log(`   - Members created: ${createdCount}`);
+  console.log(`   - Members joined pools: ${joinedCount}`);
+
+  return { createdCount, joinedCount };
+}
+
+// Function to create hybrid stakers (both pool members and solo stakers)
+async function createHybridStakers(
+  api: TypedApi,
+  godSigner: Signer,
+  derive: DeriveFunction,
+  hybridCount: number,
+  soloStake: bigint,
+  poolStake: bigint,
+  availablePoolIds: number[],
+  validatorsPerNominator: number,
+  PAS: bigint,
+  isDryRun: boolean
+) {
+  console.log(`\n🔀 Creating ${hybridCount} hybrid stakers (pool + solo)...`);
+  console.log(`   📊 Solo stake: ${Number(soloStake) / Number(PAS)} PAS per account`);
+  console.log(`   📊 Pool stake: ${Number(poolStake) / Number(PAS)} PAS per account`);
+
+  if (availablePoolIds.length === 0) {
+    console.error(`❌ No pools available for hybrid stakers to join!`);
+    return { createdCount: 0, joinedCount: 0, stakedCount: 0 };
+  }
+
+  // Get validators for nominations
+  const validatorEntries = await api.query.Staking.Validators.getEntries();
+  const allValidators = validatorEntries.map(
+    ({ keyArgs: [validator] }: { keyArgs: [string] }) => validator
+  );
+  console.log(`   📊 Available validators: ${allValidators.length}`);
+
+  let createdCount = 0;
+  let joinedCount = 0;
+  let stakedCount = 0;
+
+  for (let i = 1; i <= hybridCount; i++) {
+    const hybridAccount = getHybridAccountAtIndex(i, derive);
+
+    // Check if account exists
+    const accountInfo = await api.query.System.Account.getValue(hybridAccount.address);
+    const exists = accountInfo.providers > 0;
+
+    if (exists) {
+      console.log(`   [Hybrid ${i}] ${hybridAccount.address} already exists - skipping`);
+      continue;
+    }
+
+    const totalFunding = soloStake + poolStake + PAS * 3n; // both stakes + buffer
+    console.log(
+      `   [Hybrid ${i}] Funding ${hybridAccount.address} with ${Number(totalFunding) / Number(PAS)} PAS`
+    );
+
+    if (isDryRun) {
+      const poolId = availablePoolIds[i % availablePoolIds.length];
+      console.log(
+        `   🔍 DRY RUN: Would join pool ${poolId} with ${Number(poolStake) / Number(PAS)} PAS`
+      );
+      console.log(`   🔍 DRY RUN: Would solo stake ${Number(soloStake) / Number(PAS)} PAS`);
+      console.log(
+        `   🔍 DRY RUN: Would nominate ${Math.min(validatorsPerNominator, allValidators.length)} validators`
+      );
+      continue;
+    }
+
+    try {
+      // Fund hybrid account
+      const fundTx = api.tx.Balances.transfer_allow_death({
+        dest: MultiAddress.Id(hybridAccount.address),
+        value: totalFunding,
+      });
+
+      await new Promise((resolve, _reject) => {
+        let completed = false;
+        let subscription: { unsubscribe: () => void } | null = null;
+
+        const timeout = setTimeout(() => {
+          if (!completed) {
+            completed = true;
+            console.log(`   ⚠️  Funding timeout for hybrid ${i}`);
+            if (subscription) {
+              try {
+                subscription.unsubscribe();
+              } catch {}
+            }
+            resolve(null);
+          }
+        }, 30000);
+
+        subscription = fundTx.signSubmitAndWatch(godSigner).subscribe({
+          next: (event: TransactionEvent) => {
+            if (event.type === "txBestBlocksState") {
+              console.log(`   ✅ Hybrid ${i} funded successfully`);
+              createdCount++;
+              if (!completed) {
+                completed = true;
+                clearTimeout(timeout);
+                if (subscription) {
+                  try {
+                    subscription.unsubscribe();
+                  } catch {}
+                }
+                resolve(null);
+              }
+            }
+          },
+          error: (error: Error) => {
+            if (!completed) {
+              completed = true;
+              clearTimeout(timeout);
+              console.error(`   ❌ Hybrid ${i} funding failed:`, error);
+              if (subscription) {
+                try {
+                  subscription.unsubscribe();
+                } catch {}
+              }
+              resolve(null); // Continue with next hybrid
+            }
+          },
+        });
+      });
+
+      // Wait for balance to be available
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+
+      // Join pool first
+      const poolId = availablePoolIds[i % availablePoolIds.length];
+      console.log(
+        `   [Hybrid ${i}] Joining pool ${poolId} with ${Number(poolStake) / Number(PAS)} PAS`
+      );
+
+      const joinTx = api.tx.NominationPools.join({
+        amount: poolStake,
+        pool_id: poolId,
+      });
+
+      await new Promise((resolve) => {
+        let completed = false;
+        let subscription: { unsubscribe: () => void } | null = null;
+
+        const timeout = setTimeout(() => {
+          if (!completed) {
+            completed = true;
+            console.log(`   ⚠️  Pool join timeout for hybrid ${i}`);
+            if (subscription) {
+              try {
+                subscription.unsubscribe();
+              } catch {}
+            }
+            resolve(null);
+          }
+        }, 20000);
+
+        subscription = joinTx.signSubmitAndWatch(hybridAccount.signer).subscribe({
+          next: (event: TransactionEvent) => {
+            if (event.type === "txBestBlocksState") {
+              console.log(`   ✅ Hybrid ${i} joined pool ${poolId}`);
+              joinedCount++;
+              if (!completed) {
+                completed = true;
+                clearTimeout(timeout);
+                if (subscription) {
+                  try {
+                    subscription.unsubscribe();
+                  } catch {}
+                }
+                resolve(null);
+              }
+            }
+          },
+          error: (error: Error) => {
+            if (!completed) {
+              completed = true;
+              clearTimeout(timeout);
+              console.error(`   ❌ Hybrid ${i} pool join failed:`, error);
+              if (subscription) {
+                try {
+                  subscription.unsubscribe();
+                } catch {}
+              }
+              resolve(null);
+            }
+          },
+        });
+      });
+
+      // Small delay before solo staking
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      // Then do solo staking
+      console.log(`   [Hybrid ${i}] Solo staking ${Number(soloStake) / Number(PAS)} PAS`);
+
+      // Select random validators
+      const selectedValidators: string[] = [];
+      const validatorsCopy = [...allValidators];
+      const validatorsToSelect = Math.min(validatorsPerNominator, allValidators.length);
+
+      for (let j = 0; j < validatorsToSelect; j++) {
+        if (validatorsCopy.length === 0) break;
+        const randomIndex = Math.floor(Math.random() * validatorsCopy.length);
+        const validator = validatorsCopy[randomIndex];
+        if (validator) {
+          selectedValidators.push(validator);
+          validatorsCopy.splice(randomIndex, 1);
+        }
+      }
+
+      // Create bond and nominate transactions
+      const bondTx = api.tx.Staking.bond({
+        value: soloStake,
+        payee: { type: "Staked", value: undefined },
+      });
+
+      const validatorTargets = selectedValidators.map((validator) => MultiAddress.Id(validator));
+      const nominateTx = api.tx.Staking.nominate({ targets: validatorTargets });
+
+      // Batch bond and nominate together
+      const batchTx = api.tx.Utility.batch_all({
+        calls: [bondTx.decodedCall, nominateTx.decodedCall],
+      });
+
+      await new Promise((resolve) => {
+        let completed = false;
+        let subscription: { unsubscribe: () => void } | null = null;
+
+        const timeout = setTimeout(() => {
+          if (!completed) {
+            completed = true;
+            console.log(`   ⚠️  Solo staking timeout for hybrid ${i}`);
+            if (subscription) {
+              try {
+                subscription.unsubscribe();
+              } catch {}
+            }
+            resolve(null);
+          }
+        }, 20000);
+
+        subscription = batchTx.signSubmitAndWatch(hybridAccount.signer).subscribe({
+          next: (event: TransactionEvent) => {
+            if (event.type === "txBestBlocksState") {
+              console.log(`   ✅ Hybrid ${i} solo staking completed`);
+              stakedCount++;
+              if (!completed) {
+                completed = true;
+                clearTimeout(timeout);
+                if (subscription) {
+                  try {
+                    subscription.unsubscribe();
+                  } catch {}
+                }
+                resolve(null);
+              }
+            }
+          },
+          error: (error: Error) => {
+            if (!completed) {
+              completed = true;
+              clearTimeout(timeout);
+              console.error(`   ❌ Hybrid ${i} solo staking failed:`, error);
+              if (subscription) {
+                try {
+                  subscription.unsubscribe();
+                } catch {}
+              }
+              resolve(null);
+            }
+          },
+        });
+      });
+
+      // Small delay before next hybrid
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    } catch (error) {
+      console.error(`   ❌ Failed to create hybrid staker ${i}:`, error);
+    }
+  }
+
+  console.log(`\n📊 Hybrid Stakers Summary:`);
+  console.log(`   - Accounts created: ${createdCount}`);
+  console.log(`   - Pool joins completed: ${joinedCount}`);
+  console.log(`   - Solo stakes completed: ${stakedCount}`);
+
+  return { createdCount, joinedCount, stakedCount };
 }
 
 // Common setup function for both modes
@@ -956,6 +1966,203 @@ async function executeCompletePopulateMode(
   }
 }
 
+// Complete pool mode execution
+async function executeCompletePoolMode(
+  poolCount: number,
+  memberCount: number,
+  hybridCount: number,
+  poolStakeInput: number | null,
+  memberStakeInput: number | null,
+  commission: number,
+  validatorsPerNominator: number,
+  isDryRun: boolean,
+  godSeed: string
+) {
+  console.log("🚀 Starting PAPI Polkadot Populate - POOL MODE");
+  console.log(`📊 Configuration:`);
+  console.log(`   - Pools to create: ${poolCount}`);
+  console.log(`   - Pool members to create: ${memberCount}`);
+  console.log(`   - Hybrid stakers to create: ${hybridCount}`);
+  console.log(`   - Pool commission: ${commission}%`);
+  console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
+
+  const { api, derive, godSigner, godBalance, PAS, smoldot, client } =
+    await setupApiAndConnection(godSeed);
+
+  try {
+    // Get chain parameters
+    const { minCreateBond, minJoinBond } = await getPoolChainParameters(api, PAS);
+
+    // Use chain minimums if not specified
+    const poolStake = poolStakeInput ? PAS * BigInt(poolStakeInput) : minCreateBond;
+    const memberStake = memberStakeInput ? PAS * BigInt(memberStakeInput) : minJoinBond;
+
+    // Get solo staking minimum for hybrid accounts
+    const minNominatorBond = await api.query.Staking.MinNominatorBond.getValue();
+    const soloStake = minNominatorBond;
+
+    console.log(`\n💸 Stake configuration:`);
+    console.log(`   - Pool create stake: ${Number(poolStake) / Number(PAS)} PAS`);
+    console.log(`   - Member join stake: ${Number(memberStake) / Number(PAS)} PAS`);
+    console.log(`   - Hybrid solo stake: ${Number(soloStake) / Number(PAS)} PAS`);
+
+    // Track pool IDs to use for members and hybrids
+    let availablePoolIds: number[] = [];
+
+    // For dry-run, simulate pool IDs (assuming sequential from current max + 1)
+    if (isDryRun && poolCount > 0) {
+      const currentMaxPoolId = await api.query.NominationPools.CounterForBondedPools.getValue();
+      availablePoolIds = Array.from({ length: poolCount }, (_, i) => currentMaxPoolId + i + 1);
+    }
+
+    let totalPoolFunding = 0n;
+    let totalMemberFunding = 0n;
+    let totalHybridFunding = 0n;
+
+    // Execute or simulate operations
+    if (poolCount > 0) {
+      if (isDryRun) {
+        const { totalFunding } = await createPoolsDryRun(
+          api,
+          derive,
+          poolCount,
+          poolStake,
+          commission,
+          PAS
+        );
+        totalPoolFunding = totalFunding;
+      } else {
+        // Create pools and capture their IDs for members/hybrids to use
+        const createdPoolIds: number[] = [];
+        await createPools(
+          api,
+          godSigner,
+          derive,
+          poolCount,
+          poolStake,
+          commission,
+          createdPoolIds,
+          PAS,
+          isDryRun
+        );
+        availablePoolIds = createdPoolIds; // Use only newly created pools
+      }
+    }
+
+    // Members can only join newly created pools
+    if (memberCount > 0) {
+      if (poolCount === 0) {
+        console.error(`❌ Cannot create pool members without creating pools in the same command!`);
+        console.error(
+          `   Use --pools <number> to create pools first, then members will join them.`
+        );
+        return;
+      }
+      if (availablePoolIds.length === 0) {
+        console.error(`❌ No pools were created successfully - cannot create members`);
+        return;
+      }
+      if (isDryRun) {
+        const { totalFunding } = await createPoolMembersDryRun(
+          api,
+          derive,
+          memberCount,
+          memberStake,
+          availablePoolIds,
+          PAS
+        );
+        totalMemberFunding = totalFunding;
+      } else {
+        const createdMemberIndices: number[] = [];
+        await createPoolMembers(
+          api,
+          godSigner,
+          derive,
+          memberCount,
+          memberStake,
+          availablePoolIds, // Only join newly created pools
+          createdMemberIndices,
+          PAS,
+          isDryRun
+        );
+      }
+    }
+
+    // Hybrid stakers can only join newly created pools
+    if (hybridCount > 0) {
+      if (poolCount === 0) {
+        console.error(
+          `❌ Cannot create hybrid stakers without creating pools in the same command!`
+        );
+        console.error(
+          `   Use --pools <number> to create pools first, then hybrids will join them.`
+        );
+        return;
+      }
+      if (availablePoolIds.length === 0) {
+        console.error(`❌ No pools were created successfully - cannot create hybrid stakers`);
+        return;
+      }
+      if (isDryRun) {
+        const { totalFunding } = await createHybridStakersDryRun(
+          api,
+          derive,
+          hybridCount,
+          soloStake,
+          memberStake,
+          availablePoolIds,
+          validatorsPerNominator,
+          PAS
+        );
+        totalHybridFunding = totalFunding;
+      } else {
+        await createHybridStakers(
+          api,
+          godSigner,
+          derive,
+          hybridCount,
+          soloStake,
+          memberStake,
+          availablePoolIds, // Only join newly created pools
+          validatorsPerNominator,
+          PAS,
+          isDryRun
+        );
+      }
+    }
+
+    // Final summary
+    if (isDryRun) {
+      const totalFunding = totalPoolFunding + totalMemberFunding + totalHybridFunding;
+      console.log(`\n🔍 DRY RUN: Final Summary`);
+      console.log(`   📊 Total funding requirements:`);
+      console.log(`      - For pools: ${Number(totalPoolFunding) / Number(PAS)} PAS`);
+      console.log(`      - For members: ${Number(totalMemberFunding) / Number(PAS)} PAS`);
+      console.log(`      - For hybrids: ${Number(totalHybridFunding) / Number(PAS)} PAS`);
+      console.log(`      - Grand total: ${Number(totalFunding) / Number(PAS)} PAS`);
+      console.log(`   💰 God account balance: ${Number(godBalance) / Number(PAS)} PAS`);
+      console.log(
+        `   ${godBalance >= totalFunding ? "✅" : "❌"} Balance ${godBalance >= totalFunding ? "sufficient" : "insufficient"}`
+      );
+
+      if (godBalance < totalFunding) {
+        console.log(
+          `   ⚠️  Need additional ${Number(totalFunding - godBalance) / Number(PAS)} PAS`
+        );
+      }
+
+      console.log(`\n   🎯 To execute these operations, run the same command without --dry-run`);
+    } else {
+      console.log(`\n✅ Pool operations complete!`);
+    }
+  } finally {
+    // Clean up
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    client.destroy();
+    smoldot.terminate();
+  }
+}
+
 async function main() {
   // Parse options
   const godSeed = options.seed;
@@ -968,8 +2175,17 @@ async function main() {
   const fromIndex = options.from ? parseInt(options.from) : null;
   const toIndex = options.to ? parseInt(options.to) : null;
 
+  // Pool-specific options
+  const poolCount = options.pools ? parseInt(options.pools) : 0;
+  const memberCount = options.poolMembers ? parseInt(options.poolMembers) : 0;
+  const hybridCount = options.hybridStakers ? parseInt(options.hybridStakers) : 0;
+  const poolStake = options.poolStake ? parseFloat(options.poolStake) : null;
+  const memberStake = options.memberStake ? parseFloat(options.memberStake) : null;
+  const commission = options.poolCommission ? parseInt(options.poolCommission) : 10;
+
   // Determine operation mode
   const isTopupMode = topupAmount !== null;
+  const isPoolMode = poolCount > 0 || memberCount > 0 || hybridCount > 0;
 
   if (isTopupMode) {
     // Validate top-up options
@@ -981,6 +2197,19 @@ async function main() {
 
     // Execute complete topup mode end-to-end
     await executeCompleteTopupMode(topupAmount, fromIndex, toIndex, isDryRun, godSeed);
+  } else if (isPoolMode) {
+    // Execute complete pool mode end-to-end
+    await executeCompletePoolMode(
+      poolCount,
+      memberCount,
+      hybridCount,
+      poolStake,
+      memberStake,
+      commission,
+      validatorsPerNominator,
+      isDryRun,
+      godSeed
+    );
   } else {
     // Execute complete populate mode end-to-end
     await executeCompletePopulateMode(numNominators, validatorsPerNominator, isDryRun, godSeed);
