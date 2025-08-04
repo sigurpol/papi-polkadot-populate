@@ -179,6 +179,7 @@ export async function stakeAndNominate(
   createdAccountIndices: number[],
   stakeAmounts: Map<number, bigint>,
   validatorsPerNominator: number,
+  validatorStartIndex: number,
   PAS: bigint,
   isDryRun: boolean,
   batchSize = 25
@@ -199,6 +200,51 @@ export async function stakeAndNominate(
   }
 
   console.log(`📊 Found ${allValidators.length} validators on chain`);
+  console.log(`🔄 Starting validator assignment from index: ${validatorStartIndex}`);
+
+  // Calculate how validators will be distributed across nominators
+  // to ensure even distribution using round-robin
+  let currentValidatorIndex = validatorStartIndex;
+  const validatorAssignments: Map<number, SS58String[]> = new Map();
+
+  // Pre-calculate validator assignments to ensure even distribution
+  for (const accountIndex of createdAccountIndices) {
+    if (accountIndex === undefined) continue;
+
+    const selectedValidators: SS58String[] = [];
+
+    // Use round-robin assignment starting from currentValidatorIndex
+    for (let j = 0; j < validatorsPerNominator && j < allValidators.length; j++) {
+      const validatorIndex = (currentValidatorIndex + j) % allValidators.length;
+      const validator = allValidators[validatorIndex];
+      if (validator) {
+        selectedValidators.push(validator);
+      }
+    }
+
+    validatorAssignments.set(accountIndex, selectedValidators);
+
+    // Move start index for next nominator to ensure even distribution
+    currentValidatorIndex = (currentValidatorIndex + validatorsPerNominator) % allValidators.length;
+  }
+
+  // Log distribution statistics
+  const validatorNominationCounts: Map<SS58String, number> = new Map();
+  for (const [_, validators] of validatorAssignments) {
+    for (const validator of validators) {
+      validatorNominationCounts.set(validator, (validatorNominationCounts.get(validator) || 0) + 1);
+    }
+  }
+
+  if (validatorNominationCounts.size > 0) {
+    const counts = Array.from(validatorNominationCounts.values());
+    const minNominations = Math.min(...counts);
+    const maxNominations = Math.max(...counts);
+    console.log(
+      `📊 Validator distribution: min=${minNominations}, max=${maxNominations} nominations per validator`
+    );
+    console.log(`📊 Total unique validators assigned: ${validatorNominationCounts.size}`);
+  }
 
   let processedIndex = 0;
   let stakedCount = 0;
@@ -233,18 +279,8 @@ export async function stakeAndNominate(
           `   [${accountIndex}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
         );
 
-        // Select random validators
-        const selectedValidators: SS58String[] = [];
-        const validatorsCopy = [...allValidators];
-
-        for (let i = 0; i < Math.min(validatorsPerNominator, allValidators.length); i++) {
-          const randomIndex = Math.floor(Math.random() * validatorsCopy.length);
-          const validator = validatorsCopy[randomIndex];
-          if (validator) {
-            selectedValidators.push(validator);
-            validatorsCopy.splice(randomIndex, 1);
-          }
-        }
+        // Get pre-calculated validators for this account
+        const selectedValidators = validatorAssignments.get(accountIndex) || [];
 
         console.log(`      Selected validators: ${selectedValidators.length}`);
 
@@ -357,7 +393,7 @@ export async function stakeAndNominate(
   console.log(`   - Accounts staked: ${stakedCount}`);
   console.log(`   - Accounts skipped: ${skippedCount}`);
 
-  return { stakedCount, skippedCount };
+  return { stakedCount, skippedCount, nextValidatorIndex: currentValidatorIndex };
 }
 
 // Top-up function

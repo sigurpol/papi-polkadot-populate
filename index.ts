@@ -24,6 +24,11 @@ program
     "Number of validators each nominator will select",
     "16"
   )
+  .option(
+    "--validator-start-index <number>",
+    "Starting index for round-robin validator selection (for continuing across batches)",
+    "0"
+  )
   .option("--topup <number>", "Top up accounts to specified PAS amount")
   .option("--from <number>", "Starting account index for topup (inclusive)")
   .option("--to <number>", "Ending account index for topup (exclusive)")
@@ -110,6 +115,7 @@ async function main() {
     // Parse other mode options
     const numNominators = parseInt(options.nominators);
     const validatorsPerNominator = parseInt(options.validatorsPerNominator);
+    const validatorStartIndex = parseInt(options.validatorStartIndex);
     const topupAmount = options.topup ? parseFloat(options.topup) : null;
     const fromIndex = options.from ? parseInt(options.from) : null;
     const toIndex = options.to ? parseInt(options.to) : null;
@@ -190,15 +196,22 @@ async function main() {
 
         // Stake and nominate
         if (createdAccountIndices.length > 0) {
-          await stakeAndNominate(
+          const result = await stakeAndNominate(
             api,
             derive,
             createdAccountIndices,
             stakeAmounts,
             validatorsPerNominator,
+            validatorStartIndex,
             PAS,
             isDryRun
           );
+
+          if (result) {
+            console.log(
+              `\n📌 Next validator index for future batches: ${result.nextValidatorIndex}`
+            );
+          }
         }
       } finally {
         cleanup(smoldot, client);

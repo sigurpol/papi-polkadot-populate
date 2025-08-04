@@ -33,6 +33,7 @@ The tool accepts the following command-line parameters:
 
 - `--nominators <number>` - Number of NEW nominator accounts to create (default: 100). The tool will skip any existing accounts and create exactly this many new ones.
 - `--validators-per-nominator <number>` - Number of validators each nominator will select (default: 16)
+- `--validator-start-index <number>` - Starting index for round-robin validator selection (default: 0). Use this when creating nominators in batches to continue the even distribution.
 - `--dry-run` - Show what would happen without executing transactions (optional)
 
 ### Examples
@@ -71,6 +72,25 @@ Execute real transactions (default behavior):
 
 ```bash
 bun run index.ts --seed "your funded seed" --nominators 5
+```
+
+### Validator Distribution
+
+The tool uses a round-robin algorithm to ensure even distribution of nominators across validators:
+
+- Validators are assigned sequentially to each nominator
+- When creating large numbers of nominators, this ensures each validator receives a nearly equal number of nominations
+- Use `--validator-start-index` when creating nominators in batches to continue the distribution from where the previous batch ended
+
+Example for batch processing:
+
+```bash
+# First batch of 1000 nominators
+bun run index.ts --seed "your seed" --nominators 1000
+# Output shows: "Next validator index for future batches: 16"
+
+# Second batch continues from index 16
+bun run index.ts --seed "your seed" --nominators 1000 --validator-start-index 16
 ```
 
 ## Top-up Mode
