@@ -12,7 +12,8 @@ async function checkAccountBatch(
   endIndex: number,
   pathPrefix: string,
   PAS: bigint,
-  label: string
+  label: string,
+  fastMode = false
 ) {
   const batchSize = 2000; // Much larger batches for simple account queries
   const accounts = [];
@@ -63,37 +64,87 @@ async function checkAccountBatch(
       }
     }
 
-    // Only fetch staking info for existing accounts (much fewer queries)
+    // Conditionally fetch staking info based on mode
     if (existingAccounts.length > 0) {
-      const stakingQueries = existingAccounts.flatMap((acc) => [
-        api.query.Staking.Ledger.getValue(acc.address),
-        api.query.Staking.Nominators.getValue(acc.address),
-        api.query.NominationPools.PoolMembers.getValue(acc.address),
-      ]);
+      if (fastMode) {
+        // Fast mode: Skip staking queries entirely
+        for (const account of existingAccounts) {
+          accounts.push({
+            ...account,
+            isStaking: false,
+            isNominating: false,
+            poolMembership: null,
+          });
+        }
+      } else {
+        // Normal mode: Process staking queries in smaller batches to avoid overloading
+        const stakingBatchSize = 200; // Much smaller batches for complex staking queries
 
-      const stakingResults = await Promise.all(stakingQueries);
+        for (let i = 0; i < existingAccounts.length; i += stakingBatchSize) {
+          const batchAccounts = existingAccounts.slice(
+            i,
+            Math.min(i + stakingBatchSize, existingAccounts.length)
+          );
 
-      // Process staking results
-      for (let k = 0; k < existingAccounts.length; k++) {
-        const account = existingAccounts[k];
-        const baseIdx = k * 3;
-        const ledger = stakingResults[baseIdx];
-        const nominators = stakingResults[baseIdx + 1];
-        const poolMembers = stakingResults[baseIdx + 2];
+          const stakingQueries = batchAccounts.flatMap((acc) => [
+            api.query.Staking.Ledger.getValue(acc.address),
+            api.query.Staking.Nominators.getValue(acc.address),
+            api.query.NominationPools.PoolMembers.getValue(acc.address),
+          ]);
 
-        accounts.push({
-          ...account,
-          isStaking: ledger !== undefined,
-          isNominating: nominators !== undefined,
-          poolMembership: poolMembers,
-        });
+          const stakingResults = await Promise.all(stakingQueries);
+
+          // Process staking results for this batch
+          for (let k = 0; k < batchAccounts.length; k++) {
+            const account = batchAccounts[k];
+            const baseIdx = k * 3;
+            const ledger = stakingResults[baseIdx];
+            const nominators = stakingResults[baseIdx + 1];
+            const poolMembers = stakingResults[baseIdx + 2];
+
+            accounts.push({
+              ...account,
+              isStaking: ledger !== undefined,
+              isNominating: nominators !== undefined,
+              poolMembership: poolMembers,
+            });
+          }
+
+          // Show progress for staking queries too
+          const stakingProgress = Math.min(i + stakingBatchSize, existingAccounts.length);
+          if (existingAccounts.length > stakingBatchSize) {
+            console.log(
+              `   🥩 Fetching staking info: ${stakingProgress}/${existingAccounts.length} accounts processed`
+            );
+          }
+        }
+      }
+    }
+
+    // Show basic info for found accounts immediately (before staking queries)
+    if (existingAccounts.length > 0) {
+      console.log(
+        `   📋 Found ${existingAccounts.length} accounts in batch ${batchStart}-${batchEnd}:`
+      );
+
+      // Display up to 5 accounts per batch to avoid spam (balance info only at this point)
+      const displayAccounts = existingAccounts.slice(0, 5);
+      for (const acc of displayAccounts) {
+        const balanceInfo = `${(acc.freeBalance || 0).toFixed(2)} PAS free, ${(
+          acc.reservedBalance || 0
+        ).toFixed(2)} PAS reserved`;
+        console.log(`      [${acc.index}] ${acc.address}: ${balanceInfo}`);
+      }
+
+      if (existingAccounts.length > 5) {
+        console.log(`      ... and ${existingAccounts.length - 5} more accounts`);
       }
     }
 
     processed += batchEnd - batchStart + 1;
     const progressPct = Math.round((processed / totalRange) * 100);
     console.log(
-      `   ⚡ Progress: ${processed.toLocaleString()}/${totalRange.toLocaleString()} (${progressPct}%) - Found ${existingAccounts.length} accounts in this batch`
+      `   ⚡ Progress: ${processed.toLocaleString()}/${totalRange.toLocaleString()} (${progressPct}%) - Total found so far: ${accounts.length}`
     );
   }
 
@@ -102,8 +153,10 @@ async function checkAccountBatch(
 }
 
 // List all derived accounts created by this tool
-export async function listAccounts(godSeed: string) {
-  console.log("📋 Listing all derived accounts created by this tool...\n");
+export async function listAccounts(godSeed: string, fastMode = false) {
+  console.log(
+    `📋 Listing all derived accounts created by this tool${fastMode ? " (fast mode - no staking info)" : ""}...\n`
+  );
 
   const { api, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
 
@@ -138,48 +191,47 @@ export async function listAccounts(godSeed: string) {
 
       // Scan the detected range
       const maxIndex = maxEstimate + 500; // Small buffer
-      const accounts = await checkAccountBatch(api, derive, 1, maxIndex, pathPrefix, PAS, label);
+      const accounts = await checkAccountBatch(
+        api,
+        derive,
+        1,
+        maxIndex,
+        pathPrefix,
+        PAS,
+        label,
+        fastMode
+      );
 
       if (accounts.length === 0) {
         console.log("   No accounts found.");
         return;
       }
 
-      // Display summary first
-      console.log(`\n   📊 Summary: ${accounts.length} accounts found`);
+      // Display final summary (accounts already shown during processing)
+      console.log(`\n   📊 Final Summary: ${accounts.length} accounts found`);
       if (accounts.length > 0) {
         console.log(`   Range: ${accounts[0]?.index} to ${accounts[accounts.length - 1]?.index}`);
-      }
 
-      // Show first 10 and last 10 accounts for large lists
-      const showAccounts =
-        accounts.length <= 20 ? accounts : [...accounts.slice(0, 10), ...accounts.slice(-10)];
-
-      if (accounts.length > 20) {
-        console.log(`   📋 Showing first 10 and last 10 accounts (${accounts.length} total):`);
-      }
-
-      // Display accounts
-      for (const acc of showAccounts) {
-        const stakingStatus = acc.isStaking
-          ? acc.isNominating
-            ? "🥩 Staking & Nominating"
-            : "🥩 Staking (not nominating)"
-          : "❌ Not staking";
-
-        const poolStatus = acc.poolMembership ? "🏊 Pool member" : "";
-
+        // Calculate balance totals
+        const totalFree = accounts.reduce((sum, acc) => sum + (acc.freeBalance || 0), 0);
+        const totalReserved = accounts.reduce((sum, acc) => sum + (acc.reservedBalance || 0), 0);
         console.log(
-          `   [${acc.index}] ${acc.address}: ${(acc.freeBalance || 0).toFixed(2)} PAS free, ${(
-            acc.reservedBalance || 0
-          ).toFixed(2)} PAS reserved | ${stakingStatus} ${poolStatus}`
+          `   Total balances: ${totalFree.toFixed(2)} PAS free, ${totalReserved.toFixed(2)} PAS reserved`
         );
 
-        // Add separator between first 10 and last 10
-        if (accounts.length > 20 && acc.index === showAccounts[9]?.index) {
-          console.log("   ...");
+        if (!fastMode) {
+          // Show staking summary in normal mode
+          const stakingCount = accounts.filter((acc) => acc.isStaking).length;
+          const nominatingCount = accounts.filter((acc) => acc.isNominating).length;
+          const poolMemberCount = accounts.filter((acc) => acc.poolMembership).length;
+
+          console.log(
+            `   Staking summary: ${stakingCount} staking, ${nominatingCount} nominating, ${poolMemberCount} pool members`
+          );
         }
       }
+
+      // Individual accounts already shown during batch processing above
     };
 
     // Check regular nominators (///1, ///2, etc.)

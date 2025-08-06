@@ -56,6 +56,7 @@ program
   )
   .option("--list-pools", "List all pools created by this tool")
   .option("--list-accounts", "List all derived accounts created by this tool")
+  .option("--fast", "Skip staking info for faster account listing (use with --list-accounts)")
   .option(
     "--unbond-accounts <range>",
     "Unbond, stop nominating, and return funds to god account (e.g., '1-5' or '3,7,9')"
@@ -98,7 +99,8 @@ async function main() {
 
   if (isListAccountsMode) {
     // List derived accounts created by this tool
-    await listAccounts(godSeed);
+    const fastMode = options.fast === true;
+    await listAccounts(godSeed, fastMode);
   } else if (isUnbondMode) {
     // Parse and validate account range
     try {

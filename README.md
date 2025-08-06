@@ -509,23 +509,36 @@ The tool provides comprehensive account management capabilities to list and clea
 ### Account Management Parameters
 
 - `--list-accounts` - List all derived accounts created by this tool (shows balances and staking status)
+- `--fast` - Skip staking info for faster account listing (use with --list-accounts)
 - `--unbond-accounts <range>` - Unbond, stop nominating, and prepare accounts for fund return (e.g., '1-5' or '3,7,9')
 - `--dry-run` - Show detailed analysis without executing transactions
 
 ### Account Management Examples
 
-**List all derived accounts
+**List all derived accounts (optimized for large numbers):**
 
 ```bash
+# Normal mode: Shows balances and staking status (slower but comprehensive)
 bun run index.ts --seed "your seed phrase" --list-accounts
+
+# Fast mode: Only shows balances, skips staking queries (much faster for 30k+ accounts)
+bun run index.ts --seed "your seed phrase" --list-accounts --fast
 ```
 
-This shows all accounts across different derivation paths:
+**Performance features:**
 
 - **Fast range detection**: Quickly estimates account ranges using smart sampling
 - **Progress reporting**: Shows real-time progress for large account sets
+- **Batch processing**: Processes 2000 accounts per batch for maximum speed
 - **Smart display**: Shows summary + first/last 10 accounts for large lists
+- **Fast mode**: Skip staking queries entirely for maximum speed (use --fast)
 - **Account types**: Regular nominators (///1, ///2, etc.), Pool creators (//pool/1, //pool/2, etc.), Pool members (//member/1, //member/2, etc.), Hybrid stakers (//hybrid/1, //hybrid/2, etc.)
+
+**When to use fast mode:**
+
+- ✅ Use `--fast` for 30k+ accounts when you only need addresses and balances
+- ✅ Use `--fast` when staking info is not important
+- ❌ Don't use `--fast` when you need to see staking/pool membership status
 
 **Example output for large account sets:**
 
