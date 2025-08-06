@@ -47,6 +47,11 @@ The tool accepts the following command-line parameters:
 - `--parallel-batches <number>` - Number of batches to submit concurrently (default: 1, max: 10)
 - `--quiet` - Suppress per-account logs, show only summaries
 
+### Split Operation Parameters
+
+- `--create-only` - Only create and fund accounts, skip bonding/nominating
+- `--stake-only` - Only bond/nominate existing accounts, skip account creation
+
 ### Examples
 
 Using a mnemonic phrase:
@@ -84,6 +89,45 @@ Execute real transactions (default behavior):
 ```bash
 bun run index.ts --seed "your funded seed" --nominators 5
 ```
+
+### Split Operations Examples
+
+**Two-phase approach for creating 30,000 nominators:**
+
+Phase 1 - Create accounts only (very fast):
+
+```bash
+# Create first 1000 accounts
+bun run index.ts --seed $SEED --nominators 1000 --start-index 1 \
+  --create-only --skip-check-account --transfer-batch 1000 --no-wait --quiet
+
+# Create second 1000 accounts
+bun run index.ts --seed $SEED --nominators 1000 --start-index 1001 \
+  --create-only --skip-check-account --transfer-batch 1000 --no-wait --quiet
+
+# Continue for all batches...
+```
+
+Phase 2 - Stake existing accounts:
+
+```bash
+# Stake first 1000 accounts
+bun run index.ts --seed $SEED --stake-only --start-index 1 --nominators 1000 \
+  --skip-check-account --stake-batch 100 --no-wait --quiet
+
+# Stake second 1000 accounts
+bun run index.ts --seed $SEED --stake-only --start-index 1001 --nominators 1000 \
+  --skip-check-account --stake-batch 100 --no-wait --quiet
+
+# Continue for all batches...
+```
+
+**Benefits of split operations:**
+
+- Better error recovery: If staking fails, account creation work is preserved
+- Independent optimization: Different batch sizes for different operation complexities
+- Flexible timing: Create accounts now, stake when needed
+- Progress tracking: Monitor each phase separately
 
 ### Validator Distribution
 
@@ -483,11 +527,12 @@ The tool includes several performance optimizations that can make large-scale op
 
 1. **Start Index** - Skip checking accounts that were already processed
 2. **Skip Account Checks** - Assume all accounts from start-index are available (maximum speed)
-3. **Parallel Account Checking** - Check hundreds of accounts simultaneously
-4. **Fire-and-Forget Mode** - Don't wait for transaction finalization
-5. **Larger Batch Sizes** - Process more operations per transaction
-6. **Parallel Batch Submission** - Submit multiple batches concurrently
-7. **Quiet Mode** - Reduce console I/O overhead
+3. **Split Operations** - Separate account creation from staking for better performance
+4. **Parallel Account Checking** - Check hundreds of accounts simultaneously
+5. **Fire-and-Forget Mode** - Don't wait for transaction finalization
+6. **Larger Batch Sizes** - Process more operations per transaction
+7. **Parallel Batch Submission** - Submit multiple batches concurrently
+8. **Quiet Mode** - Reduce console I/O overhead
 
 ### Performance Examples
 
@@ -532,9 +577,27 @@ This is the fastest possible configuration:
 - Fire-and-forget mode
 - No verbose output
 
-**Creating 30,000 nominators efficiently:**
+**Creating 30,000 nominators with split operations (RECOMMENDED):**
 
-Instead of one massive operation, break it into smaller batches:
+Two-phase approach for maximum efficiency:
+
+```bash
+# Phase 1: Create accounts only (optimized for transfers)
+for i in {0..29}; do
+  start=$((i * 1000 + 1))
+  bun run index.ts --seed $SEED --nominators 1000 --start-index $start \
+    --create-only --skip-check-account --transfer-batch 1000 --no-wait --quiet
+done
+
+# Phase 2: Stake accounts only (optimized for staking)
+for i in {0..29}; do
+  start=$((i * 1000 + 1))
+  bun run index.ts --seed $SEED --stake-only --start-index $start --nominators 1000 \
+    --skip-check-account --stake-batch 100 --no-wait --quiet
+done
+```
+
+**Single-phase approach (original method):**
 
 ```bash
 # First batch (accounts ///1 to ///5000)

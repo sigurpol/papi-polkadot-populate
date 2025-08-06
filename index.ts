@@ -76,6 +76,9 @@ program
     "1"
   )
   .option("--quiet", "Suppress per-account logs, show only summaries")
+  // Split operation modes
+  .option("--create-only", "Only create and fund accounts, skip bonding/nominating")
+  .option("--stake-only", "Only bond/nominate existing accounts, skip account creation")
   .parse(process.argv);
 
 const options = program.opts();
@@ -152,6 +155,16 @@ async function main() {
     const parallelBatches = parseInt(options.parallelBatches);
     const quiet = options.quiet === true;
 
+    // Parse split operation options
+    const createOnly = options.createOnly === true;
+    const stakeOnly = options.stakeOnly === true;
+
+    // Validate mutually exclusive options
+    if (createOnly && stakeOnly) {
+      console.error("❌ Error: --create-only and --stake-only cannot be used together");
+      process.exit(1);
+    }
+
     // Determine operation mode
     const isTopupMode = topupAmount !== null;
     const isPoolMode = poolCount > 0 || memberCount > 0 || hybridCount > 0;
@@ -192,14 +205,6 @@ async function main() {
       // Execute solo nominator mode
       const { api, godSigner, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
       try {
-        // Check if we need to create accounts first
-        console.log(`🚀 Starting population with ${numNominators} nominators...`);
-        if (startIndex > 1) {
-          console.log(
-            `⚡ Starting from account index ${startIndex} (skipping ${startIndex - 1} accounts)`
-          );
-        }
-
         // Get staking parameters
         const minNominatorBond = await api.query.Staking.MinNominatorBond.getValue();
 
@@ -210,30 +215,57 @@ async function main() {
         const stakeAmounts = new Map<number, bigint>();
         const createdAccountIndices: number[] = [];
 
-        // Create accounts with performance options
-        await createAccounts(
-          api,
-          godSigner,
-          derive,
-          numNominators,
-          minNominatorBond,
-          stakeRange,
-          fixedBufferPerAccount,
-          stakeAmounts,
-          createdAccountIndices,
-          PAS,
-          isDryRun,
-          transferBatch,
-          startIndex,
-          checkBatch,
-          noWait,
-          parallelBatches,
-          quiet,
-          skipCheckAccount
-        );
+        if (createOnly) {
+          // CREATE ONLY MODE: Only create accounts, skip staking
+          console.log(`🚀 CREATE ONLY: Creating ${numNominators} accounts...`);
+          if (startIndex > 1) {
+            console.log(
+              `⚡ Starting from account index ${startIndex} (skipping ${startIndex - 1} accounts)`
+            );
+          }
 
-        // Stake and nominate
-        if (createdAccountIndices.length > 0) {
+          await createAccounts(
+            api,
+            godSigner,
+            derive,
+            numNominators,
+            minNominatorBond,
+            stakeRange,
+            fixedBufferPerAccount,
+            stakeAmounts,
+            createdAccountIndices,
+            PAS,
+            isDryRun,
+            transferBatch,
+            startIndex,
+            checkBatch,
+            noWait,
+            parallelBatches,
+            quiet,
+            skipCheckAccount
+          );
+
+          console.log(
+            `✅ Account creation completed. ${createdAccountIndices.length} accounts created.`
+          );
+          console.log(`📌 To stake these accounts later, use:`);
+          console.log(`   --stake-only --start-index ${startIndex} --nominators ${numNominators}`);
+        } else if (stakeOnly) {
+          // STAKE ONLY MODE: Only stake existing accounts, skip creation
+          console.log(`🥩 STAKE ONLY: Staking ${numNominators} existing accounts...`);
+          console.log(`⚡ Processing accounts ${startIndex} to ${startIndex + numNominators - 1}`);
+
+          // Generate account indices and stake amounts for existing accounts
+          for (let i = 0; i < numNominators; i++) {
+            const accountIndex = startIndex + i;
+            createdAccountIndices.push(accountIndex);
+
+            // Calculate same stake amount as during creation
+            const variableAmount = (stakeRange * BigInt(i % 10)) / 9n;
+            const stakeAmount = minNominatorBond + variableAmount;
+            stakeAmounts.set(accountIndex, stakeAmount);
+          }
+
           const result = await stakeAndNominate(
             api,
             derive,
@@ -254,6 +286,61 @@ async function main() {
             console.log(
               `\n📌 Next validator index for future batches: ${result.nextValidatorIndex}`
             );
+          }
+        } else {
+          // DEFAULT MODE: Both create and stake (original behavior)
+          console.log(`🚀 Starting population with ${numNominators} nominators...`);
+          if (startIndex > 1) {
+            console.log(
+              `⚡ Starting from account index ${startIndex} (skipping ${startIndex - 1} accounts)`
+            );
+          }
+
+          // Create accounts with performance options
+          await createAccounts(
+            api,
+            godSigner,
+            derive,
+            numNominators,
+            minNominatorBond,
+            stakeRange,
+            fixedBufferPerAccount,
+            stakeAmounts,
+            createdAccountIndices,
+            PAS,
+            isDryRun,
+            transferBatch,
+            startIndex,
+            checkBatch,
+            noWait,
+            parallelBatches,
+            quiet,
+            skipCheckAccount
+          );
+
+          // Stake and nominate
+          if (createdAccountIndices.length > 0) {
+            const result = await stakeAndNominate(
+              api,
+              derive,
+              createdAccountIndices,
+              stakeAmounts,
+              validatorsPerNominator,
+              validatorStartIndex,
+              PAS,
+              isDryRun,
+              stakeBatch,
+              noWait,
+              parallelBatches,
+              quiet,
+              skipCheckAccount
+            );
+
+            if (result) {
+              console.log(
+                `\n📌 Next validator index for future batches: ${result.nextValidatorIndex}`
+              );
+            }
           }
         }
       } finally {
