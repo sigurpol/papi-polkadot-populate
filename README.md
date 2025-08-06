@@ -233,11 +233,12 @@ The tool uses different derivation paths for different account types:
 
 ### Chain Limits Validation
 
-The tool automatically validates all pool operations against live chain parameters before execution:
+The tool automatically validates all pool operations against live chain parameters and existing network state before execution:
 
 - **MaxPools**: Maximum number of pools allowed on the chain (16 on Paseo)
 - **MaxPoolMembersPerPool**: Maximum members per pool (32 on Paseo)
 - **MaxPoolMembers**: Total pool members across all pools (512 on Paseo)
+- **Current Network State**: Checks existing pools and members to calculate available slots
 
 If any limits would be exceeded, the tool exits early with clear error messages and suggestions to fix the issue.
 
@@ -255,11 +256,33 @@ bun run index.ts --seed "seed" --pools 2 --pool-members 100
    With 2 pools and 100 members, each pool would have ~50 members
    Either increase --pools or reduce --pool-members
 
-# Too many total pool members
-bun run index.ts --seed "seed" --pools 10 --pool-members 400 --hybrid-stakers 200
-❌ Error: Total pool members (600) exceeds chain limit of 512
-   --pool-members: 400, --hybrid-stakers: 200
-   Reduce the total to 512 or less
+# Too many total pool members (checking available slots)
+bun run index.ts --seed "seed" --pools 5 --pool-members 200
+❌ Error: Requested 200 pool members but only 150 slots available
+   Current members: 362/512
+   --pool-members: 200, --hybrid-stakers: 0
+   Reduce the total to 150 or less
+
+# Not enough available pool slots
+bun run index.ts --seed "seed" --pools 10
+❌ Error: Requested 10 pools but only 3 slots available
+   Current pools: 13/16
+   Reduce --pools to 3 or less
+
+# No available pool slots (chain at capacity)
+bun run index.ts --seed "seed" --pools 5
+❌ Error: Requested 5 pools but only 0 slots available
+   Current pools: 16/16
+   Cannot create any pools - chain is at maximum capacity
+   Consider destroying existing pools first with --destroy-pools
+
+# No available member slots (chain at capacity)
+bun run index.ts --seed "seed" --pools 5 --pool-members 50
+❌ Error: Requested 50 pool members but only 0 slots available
+   Current members: 512/512
+   --pool-members: 50, --hybrid-stakers: 0
+   Cannot create any pool members - chain is at maximum capacity
+   Consider removing existing members first with --remove-from-pool
 ```
 
 ### Pool Creation Examples

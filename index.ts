@@ -220,19 +220,39 @@ async function main() {
 
         // Validate chain limits before starting operations
         if (poolCount > 0 || memberCount > 0 || hybridCount > 0) {
-          console.log("🔍 Checking chain limits...");
-          const [maxPools, maxPoolMembersPerPool, maxPoolMembers] = await Promise.all([
-            api.query.NominationPools.MaxPools.getValue(),
-            api.query.NominationPools.MaxPoolMembersPerPool.getValue(),
-            api.query.NominationPools.MaxPoolMembers.getValue(),
-          ]);
+          console.log("🔍 Checking chain limits and existing pools...");
+          const [maxPools, maxPoolMembersPerPool, maxPoolMembers, existingPools, existingMembers] =
+            await Promise.all([
+              api.query.NominationPools.MaxPools.getValue(),
+              api.query.NominationPools.MaxPoolMembersPerPool.getValue(),
+              api.query.NominationPools.MaxPoolMembers.getValue(),
+              api.query.NominationPools.BondedPools.getEntries(),
+              api.query.NominationPools.PoolMembers.getEntries(),
+            ]);
 
-          // Check pool count limit
-          if (poolCount > Number(maxPools)) {
+          const currentPoolCount = existingPools.filter((entry) => entry.value).length;
+          const currentMemberCount = existingMembers.length;
+          const availablePools = Number(maxPools) - currentPoolCount;
+          const availableMemberSlots = Number(maxPoolMembers) - currentMemberCount;
+
+          console.log(`   📊 Current network state:`);
+          console.log(`      - Existing pools: ${currentPoolCount}/${maxPools}`);
+          console.log(`      - Existing pool members: ${currentMemberCount}/${maxPoolMembers}`);
+          console.log(`      - Available pool slots: ${availablePools}`);
+          console.log(`      - Available member slots: ${availableMemberSlots}`);
+
+          // Check pool count limit against available slots
+          if (poolCount > availablePools) {
             console.error(
-              `❌ Error: Requested ${poolCount} pools exceeds chain limit of ${maxPools}`
+              `❌ Error: Requested ${poolCount} pools but only ${availablePools} slots available`
             );
-            console.error(`   Reduce --pools to ${maxPools} or less`);
+            console.error(`   Current pools: ${currentPoolCount}/${maxPools}`);
+            if (availablePools > 0) {
+              console.error(`   Reduce --pools to ${availablePools} or less`);
+            } else {
+              console.error(`   Cannot create any pools - chain is at maximum capacity`);
+              console.error(`   Consider destroying existing pools first with --destroy-pools`);
+            }
             process.exit(1);
           }
 
@@ -251,21 +271,31 @@ async function main() {
             }
           }
 
-          // Check total pool members limit (including hybrid stakers who are also pool members)
+          // Check total pool members limit against available slots (including hybrid stakers who are also pool members)
           const totalPoolMembers = memberCount + hybridCount;
-          if (totalPoolMembers > Number(maxPoolMembers)) {
+          if (totalPoolMembers > availableMemberSlots) {
             console.error(
-              `❌ Error: Total pool members (${totalPoolMembers}) exceeds chain limit of ${maxPoolMembers}`
+              `❌ Error: Requested ${totalPoolMembers} pool members but only ${availableMemberSlots} slots available`
             );
+            console.error(`   Current members: ${currentMemberCount}/${maxPoolMembers}`);
             console.error(`   --pool-members: ${memberCount}, --hybrid-stakers: ${hybridCount}`);
-            console.error(`   Reduce the total to ${maxPoolMembers} or less`);
+            if (availableMemberSlots > 0) {
+              console.error(`   Reduce the total to ${availableMemberSlots} or less`);
+            } else {
+              console.error(`   Cannot create any pool members - chain is at maximum capacity`);
+              console.error(`   Consider removing existing members first with --remove-from-pool`);
+            }
             process.exit(1);
           }
 
           console.log(`✅ Chain limits validation passed:`);
-          console.log(`   - Pools: ${poolCount}/${maxPools}`);
+          console.log(
+            `   - Will create ${poolCount} pools (${availablePools - poolCount} slots remaining)`
+          );
           if (totalPoolMembers > 0) {
-            console.log(`   - Total pool members: ${totalPoolMembers}/${maxPoolMembers}`);
+            console.log(
+              `   - Will create ${totalPoolMembers} pool members (${availableMemberSlots - totalPoolMembers} slots remaining)`
+            );
             if (poolCount > 0 && memberCount > 0) {
               const membersPerPool = Math.ceil(memberCount / poolCount);
               console.log(`   - Members per pool: ~${membersPerPool}/${maxPoolMembersPerPool}`);
