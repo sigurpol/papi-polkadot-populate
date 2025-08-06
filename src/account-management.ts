@@ -4,114 +4,101 @@ import { getPolkadotSigner } from "polkadot-api/signer";
 import { setupApiAndConnection, cleanup } from "./common.js";
 // No direct use of DeriveFunction in this file - it's used in imported functions
 
-// Helper function to check accounts in parallel batches
+// Optimized function to check accounts with minimal queries and progress reporting
 async function checkAccountBatch(
   api: any,
   derive: any,
   startIndex: number,
   endIndex: number,
   pathPrefix: string,
-  PAS: bigint
+  PAS: bigint,
+  label: string
 ) {
-  const batchSize = 500; // Increased to 500 for better parallelization (read-only operations)
+  const batchSize = 2000; // Much larger batches for simple account queries
   const accounts = [];
+  const totalRange = endIndex - startIndex + 1;
+  let processed = 0;
 
-  // Process all batches in parallel since API calls are read-only
-  const batchPromises = [];
+  console.log(`   📊 Checking ${totalRange.toLocaleString()} potential accounts...`);
 
+  // Process in large batches with progress reporting
   for (let i = startIndex; i <= endIndex; i += batchSize) {
     const batchEnd = Math.min(i + batchSize - 1, endIndex);
+    const batchStart = i;
 
-    // Create a promise for each batch
-    const batchPromise = (async () => {
-      const queries = [];
-      const indices = [];
+    // Simple account existence check first (very fast)
+    const queries = [];
+    const indices = [];
 
-      // Prepare batch queries
-      for (let index = i; index <= batchEnd; index++) {
-        const account = derive(pathPrefix + index);
-        const address = ss58Encode(account.publicKey, 0);
-        queries.push(api.query.System.Account.getValue(address));
-        indices.push({ index, address, account });
+    for (let index = batchStart; index <= batchEnd; index++) {
+      const account = derive(pathPrefix + index);
+      const address = ss58Encode(account.publicKey, 0);
+      queries.push(api.query.System.Account.getValue(address));
+      indices.push({ index, address });
+    }
+
+    // Execute batch queries
+    const results = await Promise.all(queries);
+
+    // Find existing accounts
+    const existingAccounts = [];
+    for (let j = 0; j < results.length; j++) {
+      const accountInfo = results[j];
+      const indexInfo = indices[j];
+
+      if (
+        indexInfo &&
+        (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n)
+      ) {
+        const { index, address } = indexInfo;
+        const freeBalance = Number(accountInfo.data.free) / Number(PAS);
+        const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
+
+        existingAccounts.push({
+          index,
+          address,
+          freeBalance,
+          reservedBalance,
+        });
       }
+    }
 
-      // Execute queries in parallel
-      const results = await Promise.all(queries);
+    // Only fetch staking info for existing accounts (much fewer queries)
+    if (existingAccounts.length > 0) {
+      const stakingQueries = existingAccounts.flatMap((acc) => [
+        api.query.Staking.Ledger.getValue(acc.address),
+        api.query.Staking.Nominators.getValue(acc.address),
+        api.query.NominationPools.PoolMembers.getValue(acc.address),
+      ]);
 
-      // Prepare staking queries for found accounts
-      const stakingQueries = [];
-      const foundAccounts = [];
+      const stakingResults = await Promise.all(stakingQueries);
 
-      for (let j = 0; j < results.length; j++) {
-        const accountInfo = results[j];
-        const indexInfo = indices[j];
-        if (indexInfo) {
-          const { index, address } = indexInfo;
+      // Process staking results
+      for (let k = 0; k < existingAccounts.length; k++) {
+        const account = existingAccounts[k];
+        const baseIdx = k * 3;
+        const ledger = stakingResults[baseIdx];
+        const nominators = stakingResults[baseIdx + 1];
+        const poolMembers = stakingResults[baseIdx + 2];
 
-          if (
-            accountInfo.nonce > 0 ||
-            accountInfo.data.free > 0n ||
-            accountInfo.data.reserved > 0n
-          ) {
-            foundAccounts.push({ index, address, accountInfo });
-            // Add staking queries
-            stakingQueries.push(
-              api.query.Staking.Ledger.getValue(address),
-              api.query.Staking.Nominators.getValue(address),
-              api.query.NominationPools.PoolMembers.getValue(address)
-            );
-          }
-        }
+        accounts.push({
+          ...account,
+          isStaking: ledger !== undefined,
+          isNominating: nominators !== undefined,
+          poolMembership: poolMembers,
+        });
       }
+    }
 
-      // Execute all staking queries in parallel
-      const stakingResults = stakingQueries.length > 0 ? await Promise.all(stakingQueries) : [];
-
-      // Process results
-      const batchAccounts = [];
-      for (let k = 0; k < foundAccounts.length; k++) {
-        const foundAccount = foundAccounts[k];
-        if (foundAccount) {
-          const { index, address, accountInfo } = foundAccount;
-          const freeBalance = Number(accountInfo.data.free) / Number(PAS);
-          const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
-
-          // Extract staking results (3 per account)
-          const baseIdx = k * 3;
-          const ledger = stakingResults[baseIdx];
-          const nominators = stakingResults[baseIdx + 1];
-          const poolMembers = stakingResults[baseIdx + 2];
-
-          batchAccounts.push({
-            index,
-            address,
-            freeBalance,
-            reservedBalance,
-            isStaking: ledger !== undefined,
-            isNominating: nominators !== undefined,
-            poolMembership: poolMembers,
-          });
-        }
-      }
-
-      return batchAccounts;
-    })();
-
-    batchPromises.push(batchPromise);
+    processed += batchEnd - batchStart + 1;
+    const progressPct = Math.round((processed / totalRange) * 100);
+    console.log(
+      `   ⚡ Progress: ${processed.toLocaleString()}/${totalRange.toLocaleString()} (${progressPct}%) - Found ${existingAccounts.length} accounts in this batch`
+    );
   }
 
-  // Wait for all batches to complete
-  const batchResults = await Promise.all(batchPromises);
-
-  // Flatten results
-  for (const batch of batchResults) {
-    accounts.push(...batch);
-  }
-
-  // Sort by index for consistent output
-  accounts.sort((a, b) => a.index - b.index);
-
-  return accounts;
+  console.log(`   ✅ ${label}: Found ${accounts.length} total accounts`);
+  return accounts.sort((a, b) => (a.index || 0) - (b.index || 0));
 }
 
 // List all derived accounts created by this tool
@@ -123,64 +110,57 @@ export async function listAccounts(godSeed: string) {
   try {
     console.log("🔍 Scanning for derived accounts (maximum parallel mode)...\n");
 
-    // Function to find the range of existing accounts (optimized for sequential accounts)
+    // Optimized function to find accounts with fast range detection
     const findAccountRange = async (pathPrefix: string, label: string) => {
       console.log(`\n👥 ${label}:`);
-      console.log("   Detecting account range (assuming sequential accounts)...");
 
-      // Since we assume sequential accounts without gaps, use binary search to find the end
-      let low = 1;
-      let high = 100000; // Maximum expected accounts
-      let lastFound = 0;
+      // Quick check: first test a few high indices to get a rough estimate
+      const estimatePoints = [50000, 40000, 30000, 20000, 10000, 5000, 1000, 100];
+      let maxEstimate = 0;
 
-      // Binary search to find the last existing account
-      while (low <= high) {
-        const mid = Math.floor((low + high) / 2);
+      console.log("   🔍 Quick range estimation...");
+      for (const testIndex of estimatePoints) {
+        const account = derive(pathPrefix + testIndex);
+        const address = ss58Encode(account.publicKey, 0);
+        const accountInfo = await api.query.System.Account.getValue(address);
 
-        // Check a small batch around the midpoint to determine if accounts exist here
-        const checkPoints = [mid, mid - 1, mid + 1].filter((n) => n >= 1);
-        const queries = checkPoints.map((index) => {
-          const account = derive(pathPrefix + index);
-          const address = ss58Encode(account.publicKey, 0);
-          return api.query.System.Account.getValue(address).then((info) => ({ index, info }));
-        });
-
-        const results = await Promise.all(queries);
-        const hasAccount = results.some(
-          (r) => r.info.nonce > 0 || r.info.data.free > 0n || r.info.data.reserved > 0n
-        );
-
-        if (hasAccount) {
-          lastFound = Math.max(
-            ...results
-              .filter((r) => r.info.nonce > 0 || r.info.data.free > 0n || r.info.data.reserved > 0n)
-              .map((r) => r.index)
-          );
-          low = mid + 1;
-        } else {
-          high = mid - 1;
+        if (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n) {
+          maxEstimate = testIndex;
+          console.log(`   ⚡ Found account at index ${testIndex}, will scan 1-${testIndex + 500}`);
+          break;
         }
       }
 
-      if (lastFound === 0) {
-        console.log("   No accounts found.");
+      if (maxEstimate === 0) {
+        console.log("   No accounts found in quick check.");
         return;
       }
 
-      // Add some buffer to ensure we don't miss any accounts
-      const maxIndex = Math.min(lastFound + 100, 100000);
-      console.log(`   Found accounts up to index ~${lastFound}, checking 1 to ${maxIndex}...`);
-
-      // Now check the determined range in parallel with maximum speed
-      const accounts = await checkAccountBatch(api, derive, 1, maxIndex, pathPrefix, PAS);
+      // Scan the detected range
+      const maxIndex = maxEstimate + 500; // Small buffer
+      const accounts = await checkAccountBatch(api, derive, 1, maxIndex, pathPrefix, PAS, label);
 
       if (accounts.length === 0) {
         console.log("   No accounts found.");
         return;
       }
 
-      // Display found accounts
-      for (const acc of accounts) {
+      // Display summary first
+      console.log(`\n   📊 Summary: ${accounts.length} accounts found`);
+      if (accounts.length > 0) {
+        console.log(`   Range: ${accounts[0]?.index} to ${accounts[accounts.length - 1]?.index}`);
+      }
+
+      // Show first 10 and last 10 accounts for large lists
+      const showAccounts =
+        accounts.length <= 20 ? accounts : [...accounts.slice(0, 10), ...accounts.slice(-10)];
+
+      if (accounts.length > 20) {
+        console.log(`   📋 Showing first 10 and last 10 accounts (${accounts.length} total):`);
+      }
+
+      // Display accounts
+      for (const acc of showAccounts) {
         const stakingStatus = acc.isStaking
           ? acc.isNominating
             ? "🥩 Staking & Nominating"
@@ -190,13 +170,16 @@ export async function listAccounts(godSeed: string) {
         const poolStatus = acc.poolMembership ? "🏊 Pool member" : "";
 
         console.log(
-          `   [${acc.index}] ${acc.address}: ${acc.freeBalance.toFixed(4)} PAS free, ${acc.reservedBalance.toFixed(
-            4
-          )} PAS reserved | ${stakingStatus} ${poolStatus}`
+          `   [${acc.index}] ${acc.address}: ${(acc.freeBalance || 0).toFixed(2)} PAS free, ${(
+            acc.reservedBalance || 0
+          ).toFixed(2)} PAS reserved | ${stakingStatus} ${poolStatus}`
         );
-      }
 
-      console.log(`   Total: ${accounts.length} accounts found`);
+        // Add separator between first 10 and last 10
+        if (accounts.length > 20 && acc.index === showAccounts[9]?.index) {
+          console.log("   ...");
+        }
+      }
     };
 
     // Check regular nominators (///1, ///2, etc.)

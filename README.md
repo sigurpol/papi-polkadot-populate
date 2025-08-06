@@ -514,7 +514,7 @@ The tool provides comprehensive account management capabilities to list and clea
 
 ### Account Management Examples
 
-**List all derived accounts:**
+**List all derived accounts
 
 ```bash
 bun run index.ts --seed "your seed phrase" --list-accounts
@@ -522,10 +522,27 @@ bun run index.ts --seed "your seed phrase" --list-accounts
 
 This shows all accounts across different derivation paths:
 
-- Regular nominators (///1, ///2, etc.)
-- Pool creators (//pool/1, //pool/2, etc.)
-- Pool members (//member/1, //member/2, etc.)
-- Hybrid stakers (//hybrid/1, //hybrid/2, etc.)
+- **Fast range detection**: Quickly estimates account ranges using smart sampling
+- **Progress reporting**: Shows real-time progress for large account sets
+- **Smart display**: Shows summary + first/last 10 accounts for large lists
+- **Account types**: Regular nominators (///1, ///2, etc.), Pool creators (//pool/1, //pool/2, etc.), Pool members (//member/1, //member/2, etc.), Hybrid stakers (//hybrid/1, //hybrid/2, etc.)
+
+**Example output for large account sets:**
+
+```bash
+👥 Regular nominators (///N):
+   🔍 Quick range estimation...
+   ⚡ Found account at index 30000, will scan 1-30500
+   📊 Checking 30,500 potential accounts...
+   ⚡ Progress: 2,000/30,500 (7%) - Found 2000 accounts in this batch
+   ⚡ Progress: 4,000/30,500 (13%) - Found 2000 accounts in this batch
+   ...
+   ✅ Regular nominators (///N): Found 30000 total accounts
+
+   📊 Summary: 30000 accounts found
+   Range: 1 to 30000
+   📋 Showing first 10 and last 10 accounts (30000 total):
+```
 
 **Unbond specific accounts and return funds:**
 
