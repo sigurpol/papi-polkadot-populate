@@ -230,13 +230,40 @@ export async function createAccounts(
                 if (!completed) {
                   completed = true;
                   clearTimeout(timeout);
-                  console.error(`   ❌ Batch failed:`, error);
+
+                  // Check if this is an infrastructure error vs transaction failure
+                  const errorMessage = error.message || error.toString();
+                  const isInfrastructureError =
+                    errorMessage.includes("ChainHead operation inaccessible") ||
+                    errorMessage.includes("OperationInaccessibleError") ||
+                    errorMessage.includes("connection") ||
+                    errorMessage.includes("network");
+
+                  if (isInfrastructureError) {
+                    console.warn(
+                      `   ⚠️ Infrastructure error (transaction may have succeeded):`,
+                      errorMessage
+                    );
+                    console.warn(
+                      `   🔄 This is usually a network/RPC issue, not a transaction failure`
+                    );
+                    console.warn(
+                      `   🔄 Continuing execution - check transaction status manually if needed`
+                    );
+                    // Don't reject - treat as success since tx was likely submitted
+                  } else {
+                    console.error(`   ❌ Transaction failed:`, error);
+                    // Only reject for actual transaction failures
+                    _reject(error);
+                    return;
+                  }
+
                   if (subscription) {
                     try {
                       subscription.unsubscribe();
                     } catch {}
                   }
-                  _reject(error);
+                  resolve(null);
                 }
               },
               complete() {
@@ -539,13 +566,40 @@ export async function stakeAndNominate(
                     if (!completed) {
                       completed = true;
                       clearTimeout(timeout);
-                      console.error(`   ❌ Transaction ${index + 1} failed:`, error);
+
+                      // Check if this is an infrastructure error vs transaction failure
+                      const errorMessage = error.message || error.toString();
+                      const isInfrastructureError =
+                        errorMessage.includes("ChainHead operation inaccessible") ||
+                        errorMessage.includes("OperationInaccessibleError") ||
+                        errorMessage.includes("connection") ||
+                        errorMessage.includes("network");
+
+                      if (isInfrastructureError) {
+                        console.warn(
+                          `   ⚠️ Infrastructure error for TX ${index + 1} (may have succeeded):`,
+                          errorMessage
+                        );
+                        console.warn(
+                          `   🔄 This is usually a network/RPC issue, not a transaction failure`
+                        );
+                        console.warn(
+                          `   🔄 Continuing execution - check transaction status manually if needed`
+                        );
+                        // Don't reject - treat as success since tx was likely submitted
+                      } else {
+                        console.error(`   ❌ Transaction ${index + 1} failed:`, error);
+                        // Only reject for actual transaction failures
+                        reject(error);
+                        return;
+                      }
+
                       if (subscription) {
                         try {
                           subscription.unsubscribe();
                         } catch {}
                       }
-                      reject(error);
+                      resolve(null);
                     }
                   },
                 });
@@ -713,13 +767,40 @@ export async function topupAccounts(
             if (!completed) {
               completed = true;
               clearTimeout(timeout);
-              console.error(`   ❌ Batch failed:`, error);
+
+              // Check if this is an infrastructure error vs transaction failure
+              const errorMessage = error.message || error.toString();
+              const isInfrastructureError =
+                errorMessage.includes("ChainHead operation inaccessible") ||
+                errorMessage.includes("OperationInaccessibleError") ||
+                errorMessage.includes("connection") ||
+                errorMessage.includes("network");
+
+              if (isInfrastructureError) {
+                console.warn(
+                  `   ⚠️ Infrastructure error (transaction may have succeeded):`,
+                  errorMessage
+                );
+                console.warn(
+                  `   🔄 This is usually a network/RPC issue, not a transaction failure`
+                );
+                console.warn(
+                  `   🔄 Continuing execution - check transaction status manually if needed`
+                );
+                // Don't reject - treat as success since tx was likely submitted
+              } else {
+                console.error(`   ❌ Batch failed:`, error);
+                // Only reject for actual transaction failures
+                _reject(error);
+                return;
+              }
+
               if (subscription) {
                 try {
                   subscription.unsubscribe();
                 } catch {}
               }
-              _reject(error);
+              resolve(null);
             }
           },
           complete() {
