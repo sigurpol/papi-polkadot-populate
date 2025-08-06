@@ -9,6 +9,7 @@ import { parsePoolRange } from "./src/utils.js";
 import { createAccounts, stakeAndNominate, topupAccounts } from "./src/solo-nominators.js";
 import { destroyPools, listPools, removeFromPool } from "./src/nomination-pools.js";
 import { listAccounts, unbondAccounts } from "./src/account-management.js";
+import { createPools, createPoolMembers, createHybridStakers } from "./src/pool-creation.js";
 
 // Set up CLI argument parsing
 const program = new Command();
@@ -195,12 +196,183 @@ async function main() {
         cleanup(smoldot, client);
       }
     } else if (isPoolMode) {
-      console.log("🚧 Pool mode not yet fully implemented in modular version");
-      console.log("Available pool commands:");
-      console.log("  --list-pools");
-      console.log("  --remove-from-pool <poolId:members>");
-      console.log("  --destroy-pools <range>");
-      process.exit(1);
+      console.log(
+        `🏊 Starting pool operations with ${poolCount} pools, ${memberCount} members, ${hybridCount} hybrids...`
+      );
+
+      const { api, godSigner, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+      try {
+        let createdPoolIds: number[] = [];
+        let nextValidatorIndex = validatorStartIndex;
+
+        // Validate pool mode requirements
+        if (memberCount > 0 && poolCount === 0) {
+          console.error("❌ Error: --pool-members requires --pools to be specified");
+          console.error("   Pool members can only join newly created pools");
+          process.exit(1);
+        }
+
+        if (hybridCount > 0 && poolCount === 0) {
+          console.error("❌ Error: --hybrid-stakers  requires --pools to be specified");
+          console.error("   Hybrid stakers need pools to join");
+          process.exit(1);
+        }
+
+        // Validate chain limits before starting operations
+        if (poolCount > 0 || memberCount > 0 || hybridCount > 0) {
+          console.log("🔍 Checking chain limits...");
+          const [maxPools, maxPoolMembersPerPool, maxPoolMembers] = await Promise.all([
+            api.query.NominationPools.MaxPools.getValue(),
+            api.query.NominationPools.MaxPoolMembersPerPool.getValue(),
+            api.query.NominationPools.MaxPoolMembers.getValue(),
+          ]);
+
+          // Check pool count limit
+          if (poolCount > Number(maxPools)) {
+            console.error(
+              `❌ Error: Requested ${poolCount} pools exceeds chain limit of ${maxPools}`
+            );
+            console.error(`   Reduce --pools to ${maxPools} or less`);
+            process.exit(1);
+          }
+
+          // Check members per pool limit
+          if (poolCount > 0 && memberCount > 0) {
+            const membersPerPool = Math.ceil(memberCount / poolCount);
+            if (membersPerPool > Number(maxPoolMembersPerPool)) {
+              console.error(
+                `❌ Error: ${membersPerPool} members per pool exceeds chain limit of ${maxPoolMembersPerPool}`
+              );
+              console.error(
+                `   With ${poolCount} pools and ${memberCount} members, each pool would have ~${membersPerPool} members`
+              );
+              console.error(`   Either increase --pools or reduce --pool-members`);
+              process.exit(1);
+            }
+          }
+
+          // Check total pool members limit (including hybrid stakers who are also pool members)
+          const totalPoolMembers = memberCount + hybridCount;
+          if (totalPoolMembers > Number(maxPoolMembers)) {
+            console.error(
+              `❌ Error: Total pool members (${totalPoolMembers}) exceeds chain limit of ${maxPoolMembers}`
+            );
+            console.error(`   --pool-members: ${memberCount}, --hybrid-stakers: ${hybridCount}`);
+            console.error(`   Reduce the total to ${maxPoolMembers} or less`);
+            process.exit(1);
+          }
+
+          console.log(`✅ Chain limits validation passed:`);
+          console.log(`   - Pools: ${poolCount}/${maxPools}`);
+          if (totalPoolMembers > 0) {
+            console.log(`   - Total pool members: ${totalPoolMembers}/${maxPoolMembers}`);
+            if (poolCount > 0 && memberCount > 0) {
+              const membersPerPool = Math.ceil(memberCount / poolCount);
+              console.log(`   - Members per pool: ~${membersPerPool}/${maxPoolMembersPerPool}`);
+            }
+          }
+        }
+
+        // Step 1: Create nomination pools
+        if (poolCount > 0) {
+          const poolStakeAmount = _poolStake
+            ? (PAS * BigInt(Math.floor(_poolStake * 100))) / 100n
+            : null;
+
+          const poolResult = await createPools(
+            api,
+            godSigner,
+            derive,
+            poolCount,
+            poolStakeAmount,
+            _commission,
+            PAS,
+            isDryRun,
+            noWait,
+            quiet
+          );
+
+          createdPoolIds = poolResult.createdPools;
+
+          if (createdPoolIds.length === 0 && !isDryRun) {
+            console.error("❌ No pools were created successfully");
+            process.exit(1);
+          }
+
+          // Get actual pool IDs from chain for non-dry-run
+          if (!isDryRun && createdPoolIds.length > 0) {
+            // In a real implementation, we'd query the chain to get the actual pool IDs
+            // For now, we'll assume pools are created with sequential IDs
+            const allPools = await api.query.NominationPools.BondedPools.getEntries();
+            const recentPools = allPools
+              .filter((entry) => entry.value) // Filter out null entries
+              .map((entry) => entry.keyArgs[0]) // Get pool IDs
+              .sort((a, b) => b - a) // Sort descending (most recent first)
+              .slice(0, poolCount); // Take the most recent pools
+
+            if (recentPools.length > 0) {
+              createdPoolIds = recentPools.reverse(); // Reverse to get ascending order
+              console.log(`📊 Using pool IDs: ${createdPoolIds.join(", ")}`);
+            }
+          } else if (isDryRun) {
+            // For dry run, simulate pool IDs
+            createdPoolIds = Array.from({ length: poolCount }, (_, i) => i + 1);
+          }
+        }
+
+        // Step 2: Create pool members
+        if (memberCount > 0 && createdPoolIds.length > 0) {
+          const memberStakeAmount = _memberStake
+            ? (PAS * BigInt(Math.floor(_memberStake * 100))) / 100n
+            : null;
+
+          await createPoolMembers(
+            api,
+            godSigner,
+            derive,
+            memberCount,
+            memberStakeAmount,
+            createdPoolIds,
+            PAS,
+            isDryRun,
+            noWait,
+            quiet
+          );
+        }
+
+        // Step 3: Create hybrid stakers
+        if (hybridCount > 0 && createdPoolIds.length > 0) {
+          const memberStakeAmount = _memberStake
+            ? (PAS * BigInt(Math.floor(_memberStake * 100))) / 100n
+            : null;
+          const soloStakeAmount = null; // Use chain minimum + buffer
+
+          const hybridResult = await createHybridStakers(
+            api,
+            godSigner,
+            derive,
+            hybridCount,
+            memberStakeAmount,
+            soloStakeAmount,
+            createdPoolIds,
+            validatorsPerNominator,
+            nextValidatorIndex,
+            PAS,
+            isDryRun,
+            noWait,
+            quiet
+          );
+
+          nextValidatorIndex = hybridResult.nextValidatorIndex || nextValidatorIndex;
+        }
+
+        console.log(`\n✅ Pool operations completed successfully!`);
+        if (nextValidatorIndex !== validatorStartIndex) {
+          console.log(`📌 Next validator index for future operations: ${nextValidatorIndex}`);
+        }
+      } finally {
+        cleanup(smoldot, client);
+      }
     } else {
       // Execute solo nominator mode
       const { api, godSigner, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);

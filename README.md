@@ -231,6 +231,37 @@ The tool uses different derivation paths for different account types:
 - Hybrid stakers: `//hybrid/1`, `//hybrid/2`, etc.
 - Regular nominators: `///1`, `///2`, etc.
 
+### Chain Limits Validation
+
+The tool automatically validates all pool operations against live chain parameters before execution:
+
+- **MaxPools**: Maximum number of pools allowed on the chain (16 on Paseo)
+- **MaxPoolMembersPerPool**: Maximum members per pool (32 on Paseo)
+- **MaxPoolMembers**: Total pool members across all pools (512 on Paseo)
+
+If any limits would be exceeded, the tool exits early with clear error messages and suggestions to fix the issue.
+
+**Examples of validation errors:**
+
+```bash
+# Too many pools
+bun run index.ts --seed "seed" --pools 20
+❌ Error: Requested 20 pools exceeds chain limit of 16
+   Reduce --pools to 16 or less
+
+# Too many members per pool
+bun run index.ts --seed "seed" --pools 2 --pool-members 100
+❌ Error: 50 members per pool exceeds chain limit of 32
+   With 2 pools and 100 members, each pool would have ~50 members
+   Either increase --pools or reduce --pool-members
+
+# Too many total pool members
+bun run index.ts --seed "seed" --pools 10 --pool-members 400 --hybrid-stakers 200
+❌ Error: Total pool members (600) exceeds chain limit of 512
+   --pool-members: 400, --hybrid-stakers: 200
+   Reduce the total to 512 or less
+```
+
 ### Pool Creation Examples
 
 **Create 3 pools using chain minimums:**
@@ -255,6 +286,28 @@ bun run index.ts --seed "your seed phrase" --pools 3 --pool-members 20
 
 ```bash
 bun run index.ts --seed "your seed phrase" --pools 2 --pool-members 15 --member-stake 50
+```
+
+**High-performance pool creation (respects chain limits):**
+
+```bash
+# Create pools up to chain limit (e.g., 16 on Paseo)
+bun run index.ts --seed $SEED --pools 16 --no-wait --quiet
+
+# Create pools with members (respecting per-pool and total limits)
+bun run index.ts --seed $SEED --pools 16 --pool-members 320 --no-wait --quiet
+
+# Maximum realistic scenario for Paseo (16 pools, 32 members each = 512 total)
+bun run index.ts --seed $SEED --pools 16 --pool-members 320 --hybrid-stakers 192 \
+  --no-wait --quiet
+```
+
+**Fire-and-forget mode for realistic operations:**
+
+```bash
+# Create pools without waiting for confirmation (maximum speed within limits)
+bun run index.ts --seed $SEED --pools 16 --pool-stake 1000 \
+  --no-wait --quiet
 ```
 
 ### Hybrid Staking Examples
@@ -339,29 +392,52 @@ bun run index.ts --seed "your seed phrase" --pools 5 --pool-members 30 --dry-run
 bun run index.ts --seed "your seed phrase" --pools 3 --hybrid-stakers 10 --dry-run
 ```
 
+### Pool Performance Optimizations
+
+**Sequential Processing (Optimized for Chain Limits):**
+
+- **Pool Creation**: Creates pools one by one with proper error handling and retry logic
+- **Member Operations**: Sequential member funding and pool joining with round-robin pool distribution
+- **Hybrid Operations**: Combines pool joining + solo staking + nomination in atomic transactions per account
+
+**Chain Limits Compliance:**
+
+- **Validates before execution**: Checks all limits against live chain parameters before starting
+- **Realistic scenarios**: Optimized for actual chain constraints (16 pools, 32 members per pool on Paseo)
+- **Early error detection**: Exits with clear guidance if limits would be exceeded
+
+**Fire-and-Forget Mode:**
+
+- Use `--no-wait` for maximum throughput (transactions submitted without waiting for confirmation)
+- Sequential transaction submission with immediate return (no blocking on finalization)
+- Ideal for operations within chain limits where individual transaction confirmation isn't critical
+
 ### Pool Behavior Details
 
 **Pool Creation:**
 
-- Each pool is created with the specified stake amount
+- Each pool is created sequentially with the specified stake amount and proper error handling
 - Pool creator account serves as root, nominator, and bouncer
 - Commission is set during pool creation
-- Pool IDs are assigned sequentially by the chain
+- Pool IDs are assigned sequentially by the chain and automatically detected
+- Validates against chain limits (MaxPools) before starting
 
 **Member Distribution:**
 
-- Members are distributed evenly across newly created pools within the same command
+- Members are distributed evenly across newly created pools using round-robin distribution
 - Members can only be created when pools are also being created (--pools required with --pool-members)
 - Each member account is funded with stake amount + buffer
 - Members automatically join their assigned pool after funding
+- Validates against MaxPoolMembersPerPool and MaxPoolMembers limits
 
 **Hybrid Staking:**
 
 - Hybrid accounts are funded with both pool stake and solo stake amounts
 - Hybrid stakers can only be created when pools are also being created (--pools required with --hybrid-stakers)
 - First joins a newly created pool, then bonds and nominates as solo staker
-- Uses batch transactions for atomic execution
-- Nominates random validators for solo staking portion
+- Operations executed sequentially with proper error handling
+- Nominates validators using round-robin selection for solo staking portion
+- Counted as pool members for MaxPoolMembers limit validation
 
 **Error Handling:**
 
