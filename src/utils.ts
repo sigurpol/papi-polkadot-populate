@@ -104,7 +104,11 @@ export function validateAndProcessSeed(godSeed: string): {
 }
 
 // Function to fetch pool chain parameters from NominationPools pallet
-export async function getPoolChainParameters(api: TypedApi, tokenUnit: bigint, tokenSymbol: string) {
+export async function getPoolChainParameters(
+  api: TypedApi,
+  tokenUnit: bigint,
+  tokenSymbol: string
+) {
   // Fetch live chain values from NominationPools pallet
   const minCreateBond = await api.query.NominationPools.MinCreateBond.getValue();
   const minJoinBond = await api.query.NominationPools.MinJoinBond.getValue();

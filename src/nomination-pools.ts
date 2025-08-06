@@ -21,7 +21,7 @@ export async function destroyPools(
   console.log(`   - Pools to destroy: ${poolIds.join(", ")}`);
   console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
 
-  const { api, derive, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, client } = await setupApiAndConnection(godSeed, network);
 
   try {
     const results = {
@@ -204,13 +204,13 @@ export async function destroyPools(
     console.log(`   - Pools not found: ${results.notFound}`);
     console.log(`   - Pools not owned: ${results.notOwned}`);
   } finally {
-    cleanup(smoldot, client);
+    cleanup(client);
   }
 }
 
 export async function listPools(godSeed: string, network: string) {
   console.log("🚀 Starting PAPI Polkadot Populate - LIST POOLS MODE");
-  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, tokenUnit, client } = await setupApiAndConnection(godSeed, network);
   const networkConfig = getNetworkConfig(network);
 
   try {
@@ -365,7 +365,7 @@ export async function listPools(godSeed: string, network: string) {
       `   - Network share: ${ownedPools.length}/${totalNetworkPools} pools (${percentage}%)`
     );
   } finally {
-    cleanup(smoldot, client);
+    cleanup(client);
   }
 }
 
@@ -397,7 +397,7 @@ export async function removeFromPool(
   );
   console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
 
-  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, tokenUnit, client } = await setupApiAndConnection(godSeed, network);
   const networkConfig = getNetworkConfig(network);
 
   try {
@@ -771,6 +771,6 @@ export async function removeFromPool(
       console.log(`   Run this command again after the period to withdraw funds.`);
     }
   } finally {
-    cleanup(smoldot, client);
+    cleanup(client);
   }
 }

@@ -297,9 +297,15 @@ export async function createAccounts(
   const totalAmount = totalStakeAmount + totalFixedBuffer;
 
   console.log(`\n💸 Final funding requirements:`);
-  console.log(`   - Total stake amount: ${Number(totalStakeAmount) / Number(tokenUnit)} ${tokenSymbol}`);
-  console.log(`   - Total fixed buffer: ${Number(totalFixedBuffer) / Number(tokenUnit)} ${tokenSymbol}`);
-  console.log(`   - Total amount needed: ${Number(totalAmount) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(
+    `   - Total stake amount: ${Number(totalStakeAmount) / Number(tokenUnit)} ${tokenSymbol}`
+  );
+  console.log(
+    `   - Total fixed buffer: ${Number(totalFixedBuffer) / Number(tokenUnit)} ${tokenSymbol}`
+  );
+  console.log(
+    `   - Total amount needed: ${Number(totalAmount) / Number(tokenUnit)} ${tokenSymbol}`
+  );
 
   console.log(`✅ Balance check passed - sufficient funds available`);
 
@@ -683,7 +689,9 @@ export async function topupAccounts(
   console.log(`\n💸 Top-up Summary:`);
   console.log(`   - Accounts needing top-up: ${accountsToTopup.length}`);
   console.log(`   - Accounts already sufficient: ${toIndex - fromIndex - accountsToTopup.length}`);
-  console.log(`   - Total top-up needed: ${Number(totalTopupNeeded) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(
+    `   - Total top-up needed: ${Number(totalTopupNeeded) / Number(tokenUnit)} ${tokenSymbol}`
+  );
 
   if (totalTopupNeeded === 0n) {
     console.log(`✅ All accounts already have sufficient balance - nothing to do`);
