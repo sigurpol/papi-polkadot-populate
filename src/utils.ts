@@ -104,7 +104,7 @@ export function validateAndProcessSeed(godSeed: string): {
 }
 
 // Function to fetch pool chain parameters from NominationPools pallet
-export async function getPoolChainParameters(api: TypedApi, PAS: bigint) {
+export async function getPoolChainParameters(api: TypedApi, tokenUnit: bigint, tokenSymbol: string) {
   // Fetch live chain values from NominationPools pallet
   const minCreateBond = await api.query.NominationPools.MinCreateBond.getValue();
   const minJoinBond = await api.query.NominationPools.MinJoinBond.getValue();
@@ -140,8 +140,8 @@ export async function getPoolChainParameters(api: TypedApi, PAS: bigint) {
   }
 
   console.log(`📊 Pool Chain Parameters:`);
-  console.log(`   MinCreateBond: ${Number(minCreateBond) / Number(PAS)} PAS`);
-  console.log(`   MinJoinBond: ${Number(minJoinBond) / Number(PAS)} PAS`);
+  console.log(`   MinCreateBond: ${Number(minCreateBond) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(`   MinJoinBond: ${Number(minJoinBond) / Number(tokenUnit)} ${tokenSymbol}`);
   if (maxPools !== undefined) console.log(`   MaxPools: ${maxPools}`);
   if (maxPoolMembers !== undefined) console.log(`   MaxPoolMembers: ${maxPoolMembers}`);
   console.log(`   Current Pools: ${counterForBondedPools}`);

@@ -10,7 +10,7 @@ import { createAccounts, stakeAndNominate, topupAccounts } from "./src/solo-nomi
 import { destroyPools, listPools, removeFromPool } from "./src/nomination-pools.js";
 import { listAccounts, unbondAccounts } from "./src/account-management.js";
 import { createPools, createPoolMembers, createHybridStakers } from "./src/pool-creation.js";
-import { SUPPORTED_NETWORKS } from "./src/network-config.js";
+import { SUPPORTED_NETWORKS, getNetworkConfig } from "./src/network-config.js";
 
 // Set up CLI argument parsing
 const program = new Command();
@@ -188,6 +188,7 @@ async function main() {
         godSeed,
         network
       );
+      const networkConfig = getNetworkConfig(network);
       try {
         const targetAmountPlanck = (tokenUnit * BigInt(Math.floor(topupAmount * 100))) / 100n;
         await topupAccounts(
@@ -198,6 +199,7 @@ async function main() {
           fromIndex,
           toIndex,
           tokenUnit,
+          networkConfig.tokenSymbol,
           isDryRun
         );
       } finally {
@@ -212,6 +214,7 @@ async function main() {
         godSeed,
         network
       );
+      const networkConfig = getNetworkConfig(network);
       try {
         let createdPoolIds: number[] = [];
         let nextValidatorIndex = validatorStartIndex;
@@ -328,6 +331,7 @@ async function main() {
             poolStakeAmount,
             _commission,
             tokenUnit,
+            networkConfig.tokenSymbol,
             isDryRun,
             noWait,
             quiet
@@ -375,6 +379,7 @@ async function main() {
             memberStakeAmount,
             createdPoolIds,
             tokenUnit,
+            networkConfig.tokenSymbol,
             isDryRun,
             noWait,
             quiet
@@ -399,6 +404,7 @@ async function main() {
             validatorsPerNominator,
             nextValidatorIndex,
             tokenUnit,
+            networkConfig.tokenSymbol,
             isDryRun,
             noWait,
             quiet
@@ -420,13 +426,14 @@ async function main() {
         godSeed,
         network
       );
+      const networkConfig = getNetworkConfig(network);
       try {
         // Get staking parameters
         const minNominatorBond = await (api.query.Staking as any).MinNominatorBond.getValue();
 
         // Calculate staking parameters
-        const baseBuffer = minNominatorBond / 5n; // 20% base buffer (50 PAS if minBond is 250)
-        const stakeRange = (minNominatorBond * 4n) / 5n; // 80% of minBond as range (200 PAS if minBond is 250)
+        const baseBuffer = minNominatorBond / 5n; // 20% base buffer (e.g., 50 tokens if minBond is 250)
+        const stakeRange = (minNominatorBond * 4n) / 5n; // 80% of minBond as range (e.g., 200 tokens if minBond is 250)
         const fixedBufferPerAccount = minNominatorBond / 10n; // 10% buffer for fees
 
         const stakeAmounts = new Map<number, bigint>();
@@ -452,6 +459,7 @@ async function main() {
             stakeAmounts,
             createdAccountIndices,
             tokenUnit,
+            networkConfig.tokenSymbol,
             isDryRun,
             transferBatch,
             startIndex,
@@ -492,6 +500,7 @@ async function main() {
             validatorsPerNominator,
             validatorStartIndex,
             tokenUnit,
+            networkConfig.tokenSymbol,
             isDryRun,
             stakeBatch,
             noWait,
@@ -526,6 +535,7 @@ async function main() {
             stakeAmounts,
             createdAccountIndices,
             tokenUnit,
+            networkConfig.tokenSymbol,
             isDryRun,
             transferBatch,
             startIndex,
@@ -547,6 +557,7 @@ async function main() {
               validatorsPerNominator,
               validatorStartIndex,
               tokenUnit,
+              networkConfig.tokenSymbol,
               isDryRun,
               stakeBatch,
               noWait,

@@ -16,7 +16,8 @@ export async function createAccounts(
   fixedBufferPerAccount: bigint,
   stakeAmounts: Map<number, bigint>,
   createdAccountIndices: number[],
-  PAS: bigint,
+  tokenUnit: bigint,
+  tokenSymbol: string,
   isDryRun: boolean,
   batchSize?: number,
   startIndex = 1,
@@ -142,7 +143,7 @@ export async function createAccounts(
         const fundingAmount = stakeAmount + fixedBufferPerAccount;
         if (!quiet) {
           console.log(
-            `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(PAS)} PAS (stake: ${Number(stakeAmount) / Number(PAS)} PAS)`
+            `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(tokenUnit)} ${tokenSymbol} (stake: ${Number(stakeAmount) / Number(tokenUnit)} ${tokenSymbol})`
           );
         }
         // Use transfer_allow_death for creating new accounts
@@ -296,9 +297,9 @@ export async function createAccounts(
   const totalAmount = totalStakeAmount + totalFixedBuffer;
 
   console.log(`\n💸 Final funding requirements:`);
-  console.log(`   - Total stake amount: ${Number(totalStakeAmount) / Number(PAS)} PAS`);
-  console.log(`   - Total fixed buffer: ${Number(totalFixedBuffer) / Number(PAS)} PAS`);
-  console.log(`   - Total amount needed: ${Number(totalAmount) / Number(PAS)} PAS`);
+  console.log(`   - Total stake amount: ${Number(totalStakeAmount) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(`   - Total fixed buffer: ${Number(totalFixedBuffer) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(`   - Total amount needed: ${Number(totalAmount) / Number(tokenUnit)} ${tokenSymbol}`);
 
   console.log(`✅ Balance check passed - sufficient funds available`);
 
@@ -313,7 +314,8 @@ export async function stakeAndNominate(
   stakeAmounts: Map<number, bigint>,
   validatorsPerNominator: number,
   validatorStartIndex: number,
-  PAS: bigint,
+  tokenUnit: bigint,
+  tokenSymbol: string,
   isDryRun: boolean,
   batchSize?: number,
   noWait = false,
@@ -443,7 +445,7 @@ export async function stakeAndNominate(
 
         if (!quiet) {
           console.log(
-            `   [${accountIndex}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
+            `   [${accountIndex}] Staking ${Number(stakeAmount) / Number(tokenUnit)} ${tokenSymbol} and nominating from ${account.address}`
           );
           console.log(`      Selected validators: ${selectedValidators.length}`);
         }
@@ -635,12 +637,13 @@ export async function topupAccounts(
   targetAmount: bigint,
   fromIndex: number,
   toIndex: number,
-  PAS: bigint,
+  tokenUnit: bigint,
+  tokenSymbol: string,
   isDryRun: boolean,
   batchSize = 500
 ) {
   console.log(
-    `\n💰 Starting topup to ${Number(targetAmount) / Number(PAS)} PAS for accounts ${fromIndex} to ${toIndex - 1}...`
+    `\n💰 Starting topup to ${Number(targetAmount) / Number(tokenUnit)} ${tokenSymbol} for accounts ${fromIndex} to ${toIndex - 1}...`
   );
 
   let accountsToTopup: {
@@ -668,11 +671,11 @@ export async function topupAccounts(
       });
       totalTopupNeeded += topupAmount;
       console.log(
-        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → needs ${Number(topupAmount) / Number(PAS)} PAS top-up`
+        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(tokenUnit)} ${tokenSymbol} → needs ${Number(topupAmount) / Number(tokenUnit)} ${tokenSymbol} top-up`
       );
     } else {
       console.log(
-        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(PAS)} PAS → no top-up needed`
+        `   [${i}] ${account.address}: ${Number(currentBalance) / Number(tokenUnit)} ${tokenSymbol} → no top-up needed`
       );
     }
   }
@@ -680,7 +683,7 @@ export async function topupAccounts(
   console.log(`\n💸 Top-up Summary:`);
   console.log(`   - Accounts needing top-up: ${accountsToTopup.length}`);
   console.log(`   - Accounts already sufficient: ${toIndex - fromIndex - accountsToTopup.length}`);
-  console.log(`   - Total top-up needed: ${Number(totalTopupNeeded) / Number(PAS)} PAS`);
+  console.log(`   - Total top-up needed: ${Number(totalTopupNeeded) / Number(tokenUnit)} ${tokenSymbol}`);
 
   if (totalTopupNeeded === 0n) {
     console.log(`✅ All accounts already have sufficient balance - nothing to do`);
@@ -709,7 +712,7 @@ export async function topupAccounts(
         continue;
       }
       console.log(
-        `   [${accountToTopup.index}] Topping up ${accountToTopup.address} with ${Number(accountToTopup.topupAmount) / Number(PAS)} PAS`
+        `   [${accountToTopup.index}] Topping up ${accountToTopup.address} with ${Number(accountToTopup.topupAmount) / Number(tokenUnit)} ${tokenSymbol}`
       );
 
       const transfer = api.tx.Balances.transfer_keep_alive({
