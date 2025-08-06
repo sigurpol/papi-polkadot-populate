@@ -209,7 +209,8 @@ async function main() {
         const minNominatorBond = await api.query.Staking.MinNominatorBond.getValue();
 
         // Calculate staking parameters
-        const stakeRange = minNominatorBond / 2n; // Vary stake amounts by up to 50%
+        const baseBuffer = minNominatorBond / 5n; // 20% base buffer (50 PAS if minBond is 250)
+        const stakeRange = (minNominatorBond * 4n) / 5n; // 80% of minBond as range (200 PAS if minBond is 250)
         const fixedBufferPerAccount = minNominatorBond / 10n; // 10% buffer for fees
 
         const stakeAmounts = new Map<number, bigint>();
@@ -242,7 +243,8 @@ async function main() {
             noWait,
             parallelBatches,
             quiet,
-            skipCheckAccount
+            skipCheckAccount,
+            baseBuffer
           );
 
           console.log(
@@ -262,7 +264,7 @@ async function main() {
 
             // Calculate same stake amount as during creation
             const variableAmount = (stakeRange * BigInt(i % 10)) / 9n;
-            const stakeAmount = minNominatorBond + variableAmount;
+            const stakeAmount = minNominatorBond + baseBuffer + variableAmount;
             stakeAmounts.set(accountIndex, stakeAmount);
           }
 
@@ -315,7 +317,8 @@ async function main() {
             noWait,
             parallelBatches,
             quiet,
-            skipCheckAccount
+            skipCheckAccount,
+            baseBuffer
           );
 
           // Stake and nominate

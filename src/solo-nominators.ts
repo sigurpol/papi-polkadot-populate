@@ -24,7 +24,8 @@ export async function createAccounts(
   noWait = false,
   _parallelBatches = 1,
   quiet = false,
-  skipCheckAccount = false
+  skipCheckAccount = false,
+  baseBuffer = 0n
 ) {
   // Use provided batch size or default
   const transferBatchSize = batchSize || 1000;
@@ -130,8 +131,9 @@ export async function createAccounts(
       if (shouldCreate) {
         const account = getAccountAtIndex(accountIndex, derive);
         // Calculate stake for this account based on how many we've created
+        // Add base buffer (20% of minBond) plus variable amount (0-80% of minBond)
         const variableAmount = (stakeRange * BigInt(createdCount % 10)) / 9n;
-        const stakeAmount = minNominatorBond + variableAmount;
+        const stakeAmount = minNominatorBond + baseBuffer + variableAmount;
         stakeAmounts.set(accountIndex, stakeAmount);
         createdAccountIndices.push(accountIndex);
         totalStakeAmount += stakeAmount;

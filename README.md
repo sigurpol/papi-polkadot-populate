@@ -6,7 +6,7 @@ This tool aims to
 - Support comprehensive nomination pool operations, including pool creation, member management, and hybrid staking scenarios.
 - Top-ups existing hard-derived accounts
 
-The stakes of these accounts use pre-determined variable amounts. Each nominator is assigned a stake amount ranging from the minimum nominator staking bond (currently 250 PAS on Paseo, as read from the chain) up to 500 PAS. This variability ensures that when we take the election snapshot, some accounts are included while others are not.
+The stakes of these accounts use pre-determined variable amounts. Each nominator is assigned a stake amount ranging from the minimum nominator staking bond plus 20% buffer (e.g., 300 PAS if minimum is 250 PAS on Paseo) up to minimum + 100% (e.g., 500 PAS). This variability ensures that when we take the election snapshot, some accounts are included while others are not.
 
 The project is inspired by [polkadot-populate](https://github.com/shawntabrizi/polkadot-populate).
 
@@ -201,7 +201,7 @@ For example, if you specify `--nominators 10` and accounts `///1`, `///2`, and `
 
 Each new account is funded with:
 
-- Its predetermined stake amount (250-500 PAS)
+- Its predetermined stake amount (300-500 PAS if minimum bond is 250 PAS)
 - 1 PAS for existential deposit
 - 1 PAS buffer for transaction fees
 
