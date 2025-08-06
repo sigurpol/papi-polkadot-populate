@@ -246,7 +246,8 @@ async function main() {
             stakeBatch,
             noWait,
             parallelBatches,
-            quiet
+            quiet,
+            skipCheckAccount
           );
 
           if (result) {

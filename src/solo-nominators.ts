@@ -289,7 +289,8 @@ export async function stakeAndNominate(
   batchSize?: number,
   noWait = false,
   parallelBatches = 1,
-  quiet = false
+  quiet = false,
+  skipCheckAccount = false
 ) {
   // Use provided batch size or default
   const stakeBatchSize = batchSize || 100;
@@ -298,6 +299,11 @@ export async function stakeAndNominate(
       `\n🥩 Starting staking and nomination for ${createdAccountIndices.length} accounts...`
     );
     console.log(`   📊 Using stake batch size of ${stakeBatchSize}`);
+    if (skipCheckAccount) {
+      console.log(
+        `   ⚡ Skip mode: Assuming all accounts are not bonded/nominating (massive speedup)`
+      );
+    }
     if (noWait) {
       console.log(`   🚀 Fire-and-forget mode enabled`);
     }
@@ -381,13 +387,21 @@ export async function stakeAndNominate(
       }
       const account = getAccountAtIndex(accountIndex, derive);
 
-      // Check if account is already bonded
-      const ledger = await api.query.Staking.Ledger.getValue(account.address);
-      const isBonded = ledger !== undefined;
+      let isBonded = false;
+      let isNominator = false;
 
-      // Check if already a nominator
-      const nominators = await api.query.Staking.Nominators.getValue(account.address);
-      const isNominator = nominators !== undefined;
+      if (skipCheckAccount) {
+        // Skip checks - assume these are new accounts that are not bonded/nominating
+        // This provides massive speedup when we know accounts are fresh
+      } else {
+        // Check if account is already bonded
+        const ledger = await api.query.Staking.Ledger.getValue(account.address);
+        isBonded = ledger !== undefined;
+
+        // Check if already a nominator
+        const nominators = await api.query.Staking.Nominators.getValue(account.address);
+        isNominator = nominators !== undefined;
+      }
 
       if (!isBonded && !isNominator) {
         // Use pre-determined stake amount from the Map
