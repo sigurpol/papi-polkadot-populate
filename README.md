@@ -8,7 +8,7 @@ This tool aims to
 
 The stakes of these accounts use pre-determined variable amounts. Each nominator is assigned a stake amount ranging from the minimum nominator staking bond (currently 250 PAS on Paseo, as read from the chain) up to 500 PAS. This variability ensures that when we take the election snapshot, some accounts are included while others are not.
 
-The project is inspired by https://github.com/shawntabrizi/polkadot-populate.
+The project is inspired by [polkadot-populate](https://github.com/shawntabrizi/polkadot-populate).
 
 ## Installation
 
@@ -35,6 +35,16 @@ The tool accepts the following command-line parameters:
 - `--validators-per-nominator <number>` - Number of validators each nominator will select (default: 16)
 - `--validator-start-index <number>` - Starting index for round-robin validator selection (default: 0). Use this when creating nominators in batches to continue the even distribution.
 - `--dry-run` - Show what would happen without executing transactions (optional)
+
+### Performance Optimization Parameters
+
+- `--start-index <number>` - Start checking from account ///N instead of ///1 (default: 1).
+- `--transfer-batch <number>` - Balance transfer batch size (default: 1000, max: 1500)
+- `--stake-batch <number>` - Staking operations batch size (default: 100, max: 250)
+- `--check-batch <number>` - Parallel account existence checks (default: 500)
+- `--no-wait` - Don't wait for transaction finalization (fire-and-forget mode)
+- `--parallel-batches <number>` - Number of batches to submit concurrently (default: 1, max: 10)
+- `--quiet` - Suppress per-account logs, show only summaries
 
 ### Examples
 
@@ -463,3 +473,86 @@ const api = client.getTypedApi(paseo);
 ...
 const PAS = 10_000_000_000n; // 1 PAS = 10^10 planck
 ```
+
+## Performance Optimization
+
+The tool includes several performance optimizations that can make large-scale operations **100-1000x faster**.
+
+### Key Performance Features
+
+1. **Start Index** - Skip checking accounts that were already processed
+2. **Parallel Account Checking** - Check hundreds of accounts simultaneously
+3. **Fire-and-Forget Mode** - Don't wait for transaction finalization
+4. **Larger Batch Sizes** - Process more operations per transaction
+5. **Parallel Batch Submission** - Submit multiple batches concurrently
+6. **Quiet Mode** - Reduce console I/O overhead
+
+### Performance Examples
+
+**Fast creation of 1000 nominators starting from index 30001:**
+
+```bash
+bun run index.ts --seed $SEED \
+  --nominators 1000 \
+  --start-index 30001 \
+  --transfer-batch 1000 \
+  --stake-batch 100 \
+  --check-batch 500 \
+  --no-wait \
+  --quiet
+```
+
+This combines multiple optimizations:
+
+- Skips checking accounts ///1 to ///30000
+- Checks 500 accounts in parallel
+- Uses larger batch sizes (1000 transfers, 100 stakes)
+- Doesn't wait for finalization
+- Suppresses verbose logging
+
+**Creating 30,000 nominators efficiently:**
+
+Instead of one massive operation, break it into smaller batches:
+
+```bash
+# First batch (accounts ///1 to ///5000)
+bun run index.ts --seed $SEED --nominators 5000 --no-wait --quiet
+
+# Second batch (starts from ///5001, skips existing)
+bun run index.ts --seed $SEED --nominators 5000 --start-index 5001 --no-wait --quiet
+
+# Third batch (starts from ///10001, skips existing)
+bun run index.ts --seed $SEED --nominators 5000 --start-index 10001 --no-wait --quiet
+
+# Continue with more batches...
+```
+
+**Maximum speed configuration:**
+
+```bash
+bun run index.ts --seed $SEED \
+  --nominators 1000 \
+  --start-index 20001 \
+  --transfer-batch 1500 \
+  --stake-batch 250 \
+  --check-batch 1000 \
+  --parallel-batches 10 \
+  --no-wait \
+  --quiet
+```
+
+### When to Use Each Optimization
+
+- **--start-index**: Always use when continuing from a previous run
+- **--no-wait**: Use for bulk operations where you don't need immediate confirmation
+- **--quiet**: Use for large operations to reduce console overhead
+- **--transfer-batch**: Increase for simple account creation (max ~1500)
+- **--stake-batch**: Keep moderate for complex staking operations (max ~250)
+- **--parallel-batches**: Use carefully, too many may overwhelm the node
+
+### Important Notes
+
+- Fire-and-forget mode (`--no-wait`) means transactions are submitted but not confirmed
+- You can verify transaction success later using block explorers
+- Start with conservative settings and increase gradually
+- Monitor your node's performance when using aggressive parallelization

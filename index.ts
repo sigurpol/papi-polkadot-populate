@@ -60,6 +60,18 @@ program
     "Unbond, stop nominating, and return funds to god account (e.g., '1-5' or '3,7,9')"
   )
   .option("--dry-run", "Show what would happen without executing transactions")
+  // Performance optimization options
+  .option("--start-index <number>", "Start checking from account ///N instead of ///1", "1")
+  .option("--transfer-batch <number>", "Balance transfer batch size (default: 1000, max: 1500)")
+  .option("--stake-batch <number>", "Staking operations batch size (default: 100, max: 250)")
+  .option("--check-batch <number>", "Parallel account existence checks (default: 500)")
+  .option("--no-wait", "Don't wait for transaction finalization (fire-and-forget mode)")
+  .option(
+    "--parallel-batches <number>",
+    "Number of batches to submit concurrently (default: 1, max: 10)",
+    "1"
+  )
+  .option("--quiet", "Suppress per-account logs, show only summaries")
   .parse(process.argv);
 
 const options = program.opts();
@@ -126,6 +138,15 @@ async function main() {
     const _memberStake = options.memberStake ? parseFloat(options.memberStake) : null;
     const _commission = options.poolCommission ? parseInt(options.poolCommission) : 10;
 
+    // Parse performance options
+    const startIndex = parseInt(options.startIndex);
+    const transferBatch = options.transferBatch ? parseInt(options.transferBatch) : undefined;
+    const stakeBatch = options.stakeBatch ? parseInt(options.stakeBatch) : undefined;
+    const checkBatch = options.checkBatch ? parseInt(options.checkBatch) : undefined;
+    const noWait = options.noWait === true;
+    const parallelBatches = parseInt(options.parallelBatches);
+    const quiet = options.quiet === true;
+
     // Determine operation mode
     const isTopupMode = topupAmount !== null;
     const isPoolMode = poolCount > 0 || memberCount > 0 || hybridCount > 0;
@@ -168,6 +189,11 @@ async function main() {
       try {
         // Check if we need to create accounts first
         console.log(`🚀 Starting population with ${numNominators} nominators...`);
+        if (startIndex > 1) {
+          console.log(
+            `⚡ Starting from account index ${startIndex} (skipping ${startIndex - 1} accounts)`
+          );
+        }
 
         // Get staking parameters
         const minNominatorBond = await api.query.Staking.MinNominatorBond.getValue();
@@ -179,7 +205,7 @@ async function main() {
         const stakeAmounts = new Map<number, bigint>();
         const createdAccountIndices: number[] = [];
 
-        // Create accounts
+        // Create accounts with performance options
         await createAccounts(
           api,
           godSigner,
@@ -191,7 +217,13 @@ async function main() {
           stakeAmounts,
           createdAccountIndices,
           PAS,
-          isDryRun
+          isDryRun,
+          transferBatch,
+          startIndex,
+          checkBatch,
+          noWait,
+          parallelBatches,
+          quiet
         );
 
         // Stake and nominate
@@ -204,7 +236,11 @@ async function main() {
             validatorsPerNominator,
             validatorStartIndex,
             PAS,
-            isDryRun
+            isDryRun,
+            stakeBatch,
+            noWait,
+            parallelBatches,
+            quiet
           );
 
           if (result) {

@@ -18,28 +18,96 @@ export async function createAccounts(
   createdAccountIndices: number[],
   PAS: bigint,
   isDryRun: boolean,
-  batchSize = 500
+  batchSize?: number,
+  startIndex = 1,
+  checkBatchSize = 500,
+  noWait = false,
+  _parallelBatches = 1,
+  quiet = false
 ) {
-  console.log(`\n📝 Creating ${targetCount} new accounts...`);
-  console.log(`   📊 Using batch size of ${batchSize}`);
+  // Use provided batch size or default
+  const transferBatchSize = batchSize || 1000;
+  if (!quiet) {
+    console.log(`\n📝 Creating ${targetCount} new accounts...`);
+    console.log(`   📊 Using transfer batch size of ${transferBatchSize}`);
+    if (startIndex > 1) {
+      console.log(`   ⚡ Starting from account index ${startIndex}`);
+    }
+    if (checkBatchSize > 1) {
+      console.log(`   🔍 Checking ${checkBatchSize} accounts in parallel`);
+    }
+    if (noWait) {
+      console.log(`   🚀 Fire-and-forget mode enabled (not waiting for finalization)`);
+    }
+  }
 
-  let accountIndex = 1; // Start checking from index 1
+  let accountIndex = startIndex; // Start checking from specified index
   let createdCount = 0;
   let skippedCount = 0;
   let totalStakeAmount = 0n;
+
+  // Pre-calculate accounts to check for parallel checking
+  const accountsToCheck: { index: number; address: string }[] = [];
+  const estimatedAccountsNeeded = targetCount + Math.floor(targetCount * 0.5); // Add 50% buffer
+
+  for (let i = startIndex; i < startIndex + estimatedAccountsNeeded; i++) {
+    const account = getAccountAtIndex(i, derive);
+    accountsToCheck.push({ index: i, address: account.address });
+  }
+
+  // Check accounts in parallel batches
+  if (!quiet) {
+    console.log(`\n🔍 Checking ${accountsToCheck.length} accounts for availability...`);
+  }
+
+  const accountStatuses = new Map<number, boolean>(); // true = needs creation
+
+  for (let i = 0; i < accountsToCheck.length; i += checkBatchSize) {
+    const checkBatch = accountsToCheck.slice(
+      i,
+      Math.min(i + checkBatchSize, accountsToCheck.length)
+    );
+
+    // Check batch in parallel
+    const checkPromises = checkBatch.map(async ({ index, address }) => {
+      const accountInfo = await api.query.System.Account.getValue(address);
+      const shouldCreate = accountInfo.providers === 0;
+      return { index, shouldCreate };
+    });
+
+    const results = await Promise.all(checkPromises);
+
+    // Store results
+    for (const { index, shouldCreate } of results) {
+      accountStatuses.set(index, shouldCreate);
+      if (!shouldCreate) {
+        skippedCount++;
+      }
+    }
+
+    // Check if we have enough accounts to create
+    const availableForCreation = Array.from(accountStatuses.values()).filter((v) => v).length;
+    if (availableForCreation >= targetCount) {
+      if (!quiet) {
+        console.log(`   ✅ Found ${availableForCreation} available account slots`);
+      }
+      break;
+    }
+  }
+
+  // Now create accounts using the pre-checked statuses
+  accountIndex = startIndex;
 
   while (createdCount < targetCount) {
     const batch = [];
 
     // Build batch of transfers
-    while (batch.length < batchSize && createdCount < targetCount) {
-      const account = getAccountAtIndex(accountIndex, derive);
-
-      // Check if account already exists
-      const accountInfo = await api.query.System.Account.getValue(account.address);
-      const shouldCreate = accountInfo.providers === 0;
+    while (batch.length < transferBatchSize && createdCount < targetCount) {
+      // Use pre-checked status
+      const shouldCreate = accountStatuses.get(accountIndex) ?? false;
 
       if (shouldCreate) {
+        const account = getAccountAtIndex(accountIndex, derive);
         // Calculate stake for this account based on how many we've created
         const variableAmount = (stakeRange * BigInt(createdCount % 10)) / 9n;
         const stakeAmount = minNominatorBond + variableAmount;
@@ -49,9 +117,11 @@ export async function createAccounts(
 
         // Fund with exact stake amount + fixed buffer
         const fundingAmount = stakeAmount + fixedBufferPerAccount;
-        console.log(
-          `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(PAS)} PAS (stake: ${Number(stakeAmount) / Number(PAS)} PAS)`
-        );
+        if (!quiet) {
+          console.log(
+            `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(PAS)} PAS (stake: ${Number(stakeAmount) / Number(PAS)} PAS)`
+          );
+        }
         // Use transfer_allow_death for creating new accounts
         const transfer = api.tx.Balances.transfer_allow_death({
           dest: MultiAddress.Id(account.address),
@@ -59,9 +129,6 @@ export async function createAccounts(
         });
         batch.push(transfer.decodedCall);
         createdCount++;
-      } else {
-        // console.log(`   [${accountIndex}] Skipping ${account.address} (already exists)`);
-        skippedCount++;
       }
 
       accountIndex++;
@@ -72,73 +139,35 @@ export async function createAccounts(
       if (isDryRun) {
         console.log(`\n🔍 DRY RUN: Would execute batch of ${batch.length} transfers`);
       } else {
-        console.log(
-          `\n⚡ Executing batch of ${batch.length} transfers (${createdCount}/${targetCount} new accounts created so far)...`
-        );
+        if (!quiet) {
+          console.log(
+            `\n⚡ Executing batch of ${batch.length} transfers (${createdCount}/${targetCount} new accounts created so far)...`
+          );
+        }
 
         // Use utility.batch_all for multiple transfers (batch_all fails all if one fails)
         const batchTx = api.tx.Utility.batch_all({ calls: batch });
 
-        // Sign and submit with timeout
-        await new Promise((resolve, _reject) => {
-          let completed = false;
-          let subscription: { unsubscribe: () => void } | null = null;
-
-          const timeout = setTimeout(() => {
-            if (!completed) {
-              completed = true;
-              console.log(`   ⚠️ Transaction timeout, but may have succeeded`);
-              if (subscription) {
-                try {
-                  subscription.unsubscribe();
-                } catch {}
-              }
-              resolve(null);
+        if (noWait) {
+          // Fire-and-forget mode: just submit and continue
+          try {
+            const txHash = await batchTx.signAndSubmit(godSigner);
+            if (!quiet) {
+              console.log(`   📋 Submitted batch transaction: ${txHash}`);
             }
-          }, 30000); // 30 second timeout
+          } catch (error) {
+            console.error(`   ❌ Failed to submit batch:`, error);
+          }
+        } else {
+          // Wait for inclusion (original behavior)
+          await new Promise((resolve, _reject) => {
+            let completed = false;
+            let subscription: { unsubscribe: () => void } | null = null;
 
-          subscription = batchTx.signSubmitAndWatch(godSigner).subscribe({
-            next: (event: TransactionEvent) => {
-              console.log(`   📡 Event: ${event.type}`);
-              if (event.type === "txBestBlocksState") {
-                console.log(`   ✅ Batch included in block`);
-                console.log(`   📋 Transaction hash: ${event.txHash}`);
-                console.log(`   🔗 https://paseo.subscan.io/extrinsic/${event.txHash}`);
-
-                // Transaction is included in block, should be successful
-                console.log(`   ✅ Transaction included in block - should be successful`);
-
-                // Transaction included in block - proceed immediately (like original polkadot-populate)
-                if (!completed) {
-                  completed = true;
-                  clearTimeout(timeout);
-                  if (subscription) {
-                    try {
-                      subscription.unsubscribe();
-                    } catch {}
-                  }
-                  resolve(null);
-                }
-              }
-            },
-            error: (error: Error) => {
+            const timeout = setTimeout(() => {
               if (!completed) {
                 completed = true;
-                clearTimeout(timeout);
-                console.error(`   ❌ Batch failed:`, error);
-                if (subscription) {
-                  try {
-                    subscription.unsubscribe();
-                  } catch {}
-                }
-                _reject(error);
-              }
-            },
-            complete() {
-              if (!completed) {
-                completed = true;
-                clearTimeout(timeout);
-                console.log(`   ✅ Batch completed`);
+                console.log(`   ⚠️ Transaction timeout, but may have succeeded`);
                 if (subscription) {
                   try {
                     subscription.unsubscribe();
@@ -146,9 +175,63 @@ export async function createAccounts(
                 }
                 resolve(null);
               }
-            },
+            }, 30000); // 30 second timeout
+
+            subscription = batchTx.signSubmitAndWatch(godSigner).subscribe({
+              next: (event: TransactionEvent) => {
+                if (!quiet) {
+                  console.log(`   📡 Event: ${event.type}`);
+                }
+                if (event.type === "txBestBlocksState") {
+                  if (!quiet) {
+                    console.log(`   ✅ Batch included in block`);
+                    console.log(`   📋 Transaction hash: ${event.txHash}`);
+                    console.log(`   🔗 https://paseo.subscan.io/extrinsic/${event.txHash}`);
+                    console.log(`   ✅ Transaction included in block - should be successful`);
+                  }
+
+                  // Transaction included in block - proceed immediately (like original polkadot-populate)
+                  if (!completed) {
+                    completed = true;
+                    clearTimeout(timeout);
+                    if (subscription) {
+                      try {
+                        subscription.unsubscribe();
+                      } catch {}
+                    }
+                    resolve(null);
+                  }
+                }
+              },
+              error: (error: Error) => {
+                if (!completed) {
+                  completed = true;
+                  clearTimeout(timeout);
+                  console.error(`   ❌ Batch failed:`, error);
+                  if (subscription) {
+                    try {
+                      subscription.unsubscribe();
+                    } catch {}
+                  }
+                  _reject(error);
+                }
+              },
+              complete() {
+                if (!completed) {
+                  completed = true;
+                  clearTimeout(timeout);
+                  console.log(`   ✅ Batch completed`);
+                  if (subscription) {
+                    try {
+                      subscription.unsubscribe();
+                    } catch {}
+                  }
+                  resolve(null);
+                }
+              },
+            });
           });
-        });
+        }
       }
     }
   }
@@ -182,11 +265,25 @@ export async function stakeAndNominate(
   validatorStartIndex: number,
   PAS: bigint,
   isDryRun: boolean,
-  batchSize = 25
+  batchSize?: number,
+  noWait = false,
+  parallelBatches = 1,
+  quiet = false
 ) {
-  console.log(
-    `\n🥩 Starting staking and nomination for ${createdAccountIndices.length} accounts...`
-  );
+  // Use provided batch size or default
+  const stakeBatchSize = batchSize || 100;
+  if (!quiet) {
+    console.log(
+      `\n🥩 Starting staking and nomination for ${createdAccountIndices.length} accounts...`
+    );
+    console.log(`   📊 Using stake batch size of ${stakeBatchSize}`);
+    if (noWait) {
+      console.log(`   🚀 Fire-and-forget mode enabled`);
+    }
+    if (parallelBatches > 1) {
+      console.log(`   🎯 Submitting ${parallelBatches} batches in parallel`);
+    }
+  }
 
   // First, get the list of all validators
   const validatorEntries = await api.query.Staking.Validators.getEntries();
@@ -199,8 +296,10 @@ export async function stakeAndNominate(
     return;
   }
 
-  console.log(`📊 Found ${allValidators.length} validators on chain`);
-  console.log(`🔄 Starting validator assignment from index: ${validatorStartIndex}`);
+  if (!quiet) {
+    console.log(`📊 Found ${allValidators.length} validators on chain`);
+    console.log(`🔄 Starting validator assignment from index: ${validatorStartIndex}`);
+  }
 
   // Calculate how validators will be distributed across nominators
   // to ensure even distribution using round-robin
@@ -236,7 +335,7 @@ export async function stakeAndNominate(
     }
   }
 
-  if (validatorNominationCounts.size > 0) {
+  if (!quiet && validatorNominationCounts.size > 0) {
     const counts = Array.from(validatorNominationCounts.values());
     const minNominations = Math.min(...counts);
     const maxNominations = Math.max(...counts);
@@ -253,7 +352,7 @@ export async function stakeAndNominate(
   while (processedIndex < createdAccountIndices.length) {
     const batch = [];
 
-    while (batch.length < batchSize && processedIndex < createdAccountIndices.length) {
+    while (batch.length < stakeBatchSize && processedIndex < createdAccountIndices.length) {
       const accountIndex = createdAccountIndices[processedIndex];
       if (accountIndex === undefined) {
         processedIndex++;
@@ -275,14 +374,15 @@ export async function stakeAndNominate(
 
         // Skip balance check - assume account has sufficient balance since we just funded it
 
-        console.log(
-          `   [${accountIndex}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
-        );
-
         // Get pre-calculated validators for this account
         const selectedValidators = validatorAssignments.get(accountIndex) || [];
 
-        console.log(`      Selected validators: ${selectedValidators.length}`);
+        if (!quiet) {
+          console.log(
+            `   [${accountIndex}] Staking ${Number(stakeAmount) / Number(PAS)} PAS and nominating from ${account.address}`
+          );
+          console.log(`      Selected validators: ${selectedValidators.length}`);
+        }
 
         // Ensure we have validators to nominate
         if (selectedValidators.length === 0) {
@@ -310,9 +410,11 @@ export async function stakeAndNominate(
 
         stakedCount++;
       } else {
-        console.log(
-          `   [${accountIndex}] Skipping ${account.address} (already bonded: ${isBonded}, nominator: ${isNominator})`
-        );
+        if (!quiet && skippedCount < 10) {
+          console.log(
+            `   [${accountIndex}] Skipping ${account.address} (already bonded: ${isBonded}, nominator: ${isNominator})`
+          );
+        }
         skippedCount++;
       }
 
@@ -326,65 +428,103 @@ export async function stakeAndNominate(
           `\n🔍 DRY RUN: Would execute batch of ${batch.length} stake+nominate operations`
         );
       } else {
-        console.log(
-          `\n⚡ Executing batch of ${batch.length} stake+nominate operations (${stakedCount + skippedCount}/${createdAccountIndices.length} accounts processed)...`
-        );
+        if (!quiet) {
+          console.log(
+            `\n⚡ Executing batch of ${batch.length} stake+nominate operations (${stakedCount + skippedCount}/${createdAccountIndices.length} accounts processed)...`
+          );
+        }
 
-        // Execute transactions in parallel
-        const promises = batch.map(
-          ({ tx, signer }, index) =>
-            new Promise((resolve, reject) => {
-              let completed = false;
-              let subscription: { unsubscribe: () => void } | null = null;
+        if (noWait) {
+          // Fire-and-forget mode: submit all transactions without waiting
+          const submitPromises = batch.map(async ({ tx, signer }) => {
+            try {
+              const txHash = await tx.signAndSubmit(signer);
+              if (!quiet) {
+                console.log(`   📋 Submitted transaction: ${txHash}`);
+              }
+              return { success: true, txHash };
+            } catch (error) {
+              console.error(`   ❌ Failed to submit transaction:`, error);
+              return { success: false, error };
+            }
+          });
 
-              const timeout = setTimeout(() => {
-                if (!completed) {
-                  completed = true;
-                  console.log(`   ⚠️ Transaction ${index + 1} timeout`);
-                  if (subscription) {
-                    try {
-                      subscription.unsubscribe();
-                    } catch {}
-                  }
-                  resolve(null);
-                }
-              }, 30000);
+          // Submit in parallel batches if specified
+          if (parallelBatches > 1) {
+            for (let i = 0; i < submitPromises.length; i += parallelBatches) {
+              const chunk = submitPromises.slice(i, i + parallelBatches);
+              await Promise.allSettled(chunk);
+            }
+          } else {
+            await Promise.allSettled(submitPromises);
+          }
+        } else {
+          // Original behavior: wait for inclusion
+          const promises = batch.map(
+            ({ tx, signer }, index) =>
+              new Promise((resolve, reject) => {
+                let completed = false;
+                let subscription: { unsubscribe: () => void } | null = null;
 
-              subscription = tx.signSubmitAndWatch(signer).subscribe({
-                next: (event: TransactionEvent) => {
-                  if (event.type === "txBestBlocksState") {
-                    console.log(`   ✅ Transaction ${index + 1} included in block`);
-                    console.log(`   📋 TX ${index + 1} hash: ${event.txHash}`);
-                    if (!completed) {
-                      completed = true;
-                      clearTimeout(timeout);
-                      if (subscription) {
-                        try {
-                          subscription.unsubscribe();
-                        } catch {}
-                      }
-                      resolve(null);
-                    }
-                  }
-                },
-                error: (error: Error) => {
+                const timeout = setTimeout(() => {
                   if (!completed) {
                     completed = true;
-                    clearTimeout(timeout);
-                    console.error(`   ❌ Transaction ${index + 1} failed:`, error);
+                    console.log(`   ⚠️ Transaction ${index + 1} timeout`);
                     if (subscription) {
                       try {
                         subscription.unsubscribe();
                       } catch {}
                     }
-                    reject(error);
+                    resolve(null);
                   }
-                },
-              });
-            })
-        );
+                }, 30000);
 
-        await Promise.allSettled(promises);
+                subscription = tx.signSubmitAndWatch(signer).subscribe({
+                  next: (event: TransactionEvent) => {
+                    if (event.type === "txBestBlocksState") {
+                      if (!quiet) {
+                        console.log(`   ✅ Transaction ${index + 1} included in block`);
+                        console.log(`   📋 TX ${index + 1} hash: ${event.txHash}`);
+                      }
+                      if (!completed) {
+                        completed = true;
+                        clearTimeout(timeout);
+                        if (subscription) {
+                          try {
+                            subscription.unsubscribe();
+                          } catch {}
+                        }
+                        resolve(null);
+                      }
+                    }
+                  },
+                  error: (error: Error) => {
+                    if (!completed) {
+                      completed = true;
+                      clearTimeout(timeout);
+                      console.error(`   ❌ Transaction ${index + 1} failed:`, error);
+                      if (subscription) {
+                        try {
+                          subscription.unsubscribe();
+                        } catch {}
+                      }
+                      reject(error);
+                    }
+                  },
+                });
+              })
+          );
+
+          // Execute in parallel batches if specified
+          if (parallelBatches > 1) {
+            for (let i = 0; i < promises.length; i += parallelBatches) {
+              const chunk = promises.slice(i, i + parallelBatches);
+              await Promise.allSettled(chunk);
+            }
+          } else {
+            await Promise.allSettled(promises);
+          }
+        }
       }
     }
   }
