@@ -39,6 +39,7 @@ The tool accepts the following command-line parameters:
 ### Performance Optimization Parameters
 
 - `--start-index <number>` - Start checking from account ///N instead of ///1 (default: 1).
+- `--skip-check-account` - Skip account existence checks, assume all accounts from start-index are available. **MAXIMUM SPEED**
 - `--transfer-batch <number>` - Balance transfer batch size (default: 1000, max: 1500)
 - `--stake-batch <number>` - Staking operations batch size (default: 100, max: 250)
 - `--check-batch <number>` - Parallel account existence checks (default: 500)
@@ -481,11 +482,12 @@ The tool includes several performance optimizations that can make large-scale op
 ### Key Performance Features
 
 1. **Start Index** - Skip checking accounts that were already processed
-2. **Parallel Account Checking** - Check hundreds of accounts simultaneously
-3. **Fire-and-Forget Mode** - Don't wait for transaction finalization
-4. **Larger Batch Sizes** - Process more operations per transaction
-5. **Parallel Batch Submission** - Submit multiple batches concurrently
-6. **Quiet Mode** - Reduce console I/O overhead
+2. **Skip Account Checks** - Assume all accounts from start-index are available (maximum speed)
+3. **Parallel Account Checking** - Check hundreds of accounts simultaneously
+4. **Fire-and-Forget Mode** - Don't wait for transaction finalization
+5. **Larger Batch Sizes** - Process more operations per transaction
+6. **Parallel Batch Submission** - Submit multiple batches concurrently
+7. **Quiet Mode** - Reduce console I/O overhead
 
 ### Performance Examples
 
@@ -509,6 +511,26 @@ This combines multiple optimizations:
 - Uses larger batch sizes (1000 transfers, 100 stakes)
 - Doesn't wait for finalization
 - Suppresses verbose logging
+
+**MAXIMUM SPEED: Skip all account checks (when you know accounts don't exist):**
+
+```bash
+bun run index.ts --seed $SEED \
+  --nominators 1000 \
+  --start-index 30001 \
+  --skip-check-account \
+  --transfer-batch 1500 \
+  --stake-batch 250 \
+  --no-wait \
+  --quiet
+```
+
+This is the fastest possible configuration:
+
+- Assumes accounts ///30001 to ///31000 are available (no checks)
+- Uses maximum batch sizes
+- Fire-and-forget mode
+- No verbose output
 
 **Creating 30,000 nominators efficiently:**
 
@@ -544,6 +566,7 @@ bun run index.ts --seed $SEED \
 ### When to Use Each Optimization
 
 - **--start-index**: Always use when continuing from a previous run
+- **--skip-check-account**: Use when you're confident accounts don't exist (maximum speed)
 - **--no-wait**: Use for bulk operations where you don't need immediate confirmation
 - **--quiet**: Use for large operations to reduce console overhead
 - **--transfer-batch**: Increase for simple account creation (max ~1500)
@@ -552,6 +575,8 @@ bun run index.ts --seed $SEED \
 
 ### Important Notes
 
+- **--skip-check-account is dangerous**: Only use if you're certain the account range is empty
+- If accounts already exist, transfers will fail and you'll waste transaction fees
 - Fire-and-forget mode (`--no-wait`) means transactions are submitted but not confirmed
 - You can verify transaction success later using block explorers
 - Start with conservative settings and increase gradually

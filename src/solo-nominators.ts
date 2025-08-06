@@ -23,7 +23,8 @@ export async function createAccounts(
   checkBatchSize = 500,
   noWait = false,
   _parallelBatches = 1,
-  quiet = false
+  quiet = false,
+  skipCheckAccount = false
 ) {
   // Use provided batch size or default
   const transferBatchSize = batchSize || 1000;
@@ -33,7 +34,11 @@ export async function createAccounts(
     if (startIndex > 1) {
       console.log(`   ⚡ Starting from account index ${startIndex}`);
     }
-    if (checkBatchSize > 1) {
+    if (skipCheckAccount) {
+      console.log(
+        `   🚀 SKIP CHECK MODE: Assuming accounts ${startIndex} to ${startIndex + targetCount - 1} are available`
+      );
+    } else if (checkBatchSize > 1) {
       console.log(`   🔍 Checking ${checkBatchSize} accounts in parallel`);
     }
     if (noWait) {
@@ -46,56 +51,72 @@ export async function createAccounts(
   let skippedCount = 0;
   let totalStakeAmount = 0n;
 
-  // Pre-calculate accounts to check for parallel checking
-  const accountsToCheck: { index: number; address: string }[] = [];
-  const estimatedAccountsNeeded = targetCount + Math.floor(targetCount * 0.5); // Add 50% buffer
-
-  for (let i = startIndex; i < startIndex + estimatedAccountsNeeded; i++) {
-    const account = getAccountAtIndex(i, derive);
-    accountsToCheck.push({ index: i, address: account.address });
-  }
-
-  // Check accounts in parallel batches
-  if (!quiet) {
-    console.log(`\n🔍 Checking ${accountsToCheck.length} accounts for availability...`);
-  }
-
+  // Account status tracking
   const accountStatuses = new Map<number, boolean>(); // true = needs creation
 
-  for (let i = 0; i < accountsToCheck.length; i += checkBatchSize) {
-    const checkBatch = accountsToCheck.slice(
-      i,
-      Math.min(i + checkBatchSize, accountsToCheck.length)
-    );
-
-    // Check batch in parallel
-    const checkPromises = checkBatch.map(async ({ index, address }) => {
-      const accountInfo = await api.query.System.Account.getValue(address);
-      const shouldCreate = accountInfo.providers === 0;
-      return { index, shouldCreate };
-    });
-
-    const results = await Promise.all(checkPromises);
-
-    // Store results
-    for (const { index, shouldCreate } of results) {
-      accountStatuses.set(index, shouldCreate);
-      if (!shouldCreate) {
-        skippedCount++;
-      }
+  if (skipCheckAccount) {
+    // Skip all account existence checks - assume all accounts from startIndex are available
+    if (!quiet) {
+      console.log(
+        `\n⚡ Skipping account checks - assuming all accounts are available for creation`
+      );
     }
 
-    // Check if we have enough accounts to create
-    const availableForCreation = Array.from(accountStatuses.values()).filter((v) => v).length;
-    if (availableForCreation >= targetCount) {
-      if (!quiet) {
-        console.log(`   ✅ Found ${availableForCreation} available account slots`);
+    // Pre-populate statuses assuming all accounts need creation
+    for (let i = 0; i < targetCount; i++) {
+      accountStatuses.set(startIndex + i, true);
+    }
+  } else {
+    // Do the normal account checking process
+    // Pre-calculate accounts to check for parallel checking
+    const accountsToCheck: { index: number; address: string }[] = [];
+    const estimatedAccountsNeeded = targetCount + Math.floor(targetCount * 0.5); // Add 50% buffer
+
+    for (let i = startIndex; i < startIndex + estimatedAccountsNeeded; i++) {
+      const account = getAccountAtIndex(i, derive);
+      accountsToCheck.push({ index: i, address: account.address });
+    }
+
+    // Check accounts in parallel batches
+    if (!quiet) {
+      console.log(`\n🔍 Checking ${accountsToCheck.length} accounts for availability...`);
+    }
+
+    for (let i = 0; i < accountsToCheck.length; i += checkBatchSize) {
+      const checkBatch = accountsToCheck.slice(
+        i,
+        Math.min(i + checkBatchSize, accountsToCheck.length)
+      );
+
+      // Check batch in parallel
+      const checkPromises = checkBatch.map(async ({ index, address }) => {
+        const accountInfo = await api.query.System.Account.getValue(address);
+        const shouldCreate = accountInfo.providers === 0;
+        return { index, shouldCreate };
+      });
+
+      const results = await Promise.all(checkPromises);
+
+      // Store results
+      for (const { index, shouldCreate } of results) {
+        accountStatuses.set(index, shouldCreate);
+        if (!shouldCreate) {
+          skippedCount++;
+        }
       }
-      break;
+
+      // Check if we have enough accounts to create
+      const availableForCreation = Array.from(accountStatuses.values()).filter((v) => v).length;
+      if (availableForCreation >= targetCount) {
+        if (!quiet) {
+          console.log(`   ✅ Found ${availableForCreation} available account slots`);
+        }
+        break;
+      }
     }
   }
 
-  // Now create accounts using the pre-checked statuses
+  // Now create accounts using the pre-determined statuses
   accountIndex = startIndex;
 
   while (createdCount < targetCount) {

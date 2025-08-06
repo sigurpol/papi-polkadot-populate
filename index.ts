@@ -62,6 +62,10 @@ program
   .option("--dry-run", "Show what would happen without executing transactions")
   // Performance optimization options
   .option("--start-index <number>", "Start checking from account ///N instead of ///1", "1")
+  .option(
+    "--skip-check-account",
+    "Skip account existence checks, assume all accounts from start-index are available"
+  )
   .option("--transfer-batch <number>", "Balance transfer batch size (default: 1000, max: 1500)")
   .option("--stake-batch <number>", "Staking operations batch size (default: 100, max: 250)")
   .option("--check-batch <number>", "Parallel account existence checks (default: 500)")
@@ -140,6 +144,7 @@ async function main() {
 
     // Parse performance options
     const startIndex = parseInt(options.startIndex);
+    const skipCheckAccount = options.skipCheckAccount === true;
     const transferBatch = options.transferBatch ? parseInt(options.transferBatch) : undefined;
     const stakeBatch = options.stakeBatch ? parseInt(options.stakeBatch) : undefined;
     const checkBatch = options.checkBatch ? parseInt(options.checkBatch) : undefined;
@@ -223,7 +228,8 @@ async function main() {
           checkBatch,
           noWait,
           parallelBatches,
-          quiet
+          quiet,
+          skipCheckAccount
         );
 
         // Stake and nominate
