@@ -6,16 +6,22 @@ import {
   getPoolMemberAccountAtIndex,
   getHybridAccountAtIndex,
 } from "./utils.js";
+import { getNetworkConfig } from "./network-config.js";
 // Types are used in function parameters and return types
 
 // Export the pool management functions
-export async function destroyPools(poolIds: number[], isDryRun: boolean, godSeed: string) {
+export async function destroyPools(
+  poolIds: number[],
+  isDryRun: boolean,
+  godSeed: string,
+  network: string
+) {
   console.log("🚀 Starting PAPI Polkadot Populate - DESTROY POOLS MODE");
   console.log(`📊 Configuration:`);
   console.log(`   - Pools to destroy: ${poolIds.join(", ")}`);
   console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
 
-  const { api, derive, smoldot, client } = await setupApiAndConnection(godSeed);
+  const { api, derive, smoldot, client } = await setupApiAndConnection(godSeed, network);
 
   try {
     const results = {
@@ -31,7 +37,7 @@ export async function destroyPools(poolIds: number[], isDryRun: boolean, godSeed
       console.log(`\n🔍 Checking pool ${poolId}...`);
 
       // Check if pool exists
-      const poolInfo = await api.query.NominationPools.BondedPools.getValue(poolId);
+      const poolInfo = await (api.query.NominationPools as any).BondedPools.getValue(poolId);
       if (!poolInfo) {
         console.log(`   ❌ Pool ${poolId} does not exist`);
         results.notFound++;
@@ -73,8 +79,8 @@ export async function destroyPools(poolIds: number[], isDryRun: boolean, godSeed
       }
 
       // Check if pool has members
-      const memberEntries = await api.query.NominationPools.PoolMembers.getEntries();
-      const poolMembers = memberEntries.filter((entry) => entry.value.pool_id === poolId);
+      const memberEntries = await (api.query.NominationPools as any).PoolMembers.getEntries();
+      const poolMembers = memberEntries.filter((entry: any) => entry.value.pool_id === poolId);
       const memberCount = poolMembers.length;
 
       if (memberCount > 0) {
@@ -101,7 +107,7 @@ export async function destroyPools(poolIds: number[], isDryRun: boolean, godSeed
 
       try {
         // First set the pool state to Destroying
-        const setStateTx = api.tx.NominationPools.set_state({
+        const setStateTx = (api.tx.NominationPools as any).set_state({
           pool_id: poolId,
           state: { type: "Destroying", value: undefined },
         });
@@ -202,17 +208,18 @@ export async function destroyPools(poolIds: number[], isDryRun: boolean, godSeed
   }
 }
 
-export async function listPools(godSeed: string) {
+export async function listPools(godSeed: string, network: string) {
   console.log("🚀 Starting PAPI Polkadot Populate - LIST POOLS MODE");
-  const { api, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const networkConfig = getNetworkConfig(network);
 
   try {
     console.log(`\n🔍 Scanning for pools created by this tool...`);
 
     // Get all existing pools and members in parallel
     const [allPoolEntries, allMemberEntries] = await Promise.all([
-      api.query.NominationPools.BondedPools.getEntries(),
-      api.query.NominationPools.PoolMembers.getEntries(),
+      (api.query.NominationPools as any).BondedPools.getEntries(),
+      (api.query.NominationPools as any).PoolMembers.getEntries(),
     ]);
 
     console.log(`   Found ${allPoolEntries.length} total pools on the network`);
@@ -298,10 +305,10 @@ export async function listPools(godSeed: string) {
 
     for (const { poolId, info, creatorAddress, creatorIndex } of ownedPools) {
       // Get members for this pool (O(n) but only once for all pools)
-      const poolMembers = allMemberEntries.filter((entry) => entry.value.pool_id === poolId);
+      const poolMembers = allMemberEntries.filter((entry: any) => entry.value.pool_id === poolId);
       const memberCount = poolMembers.length;
       const stateStr = info.state.type;
-      const pointsStr = `${Number(info.points) / Number(PAS)} PAS`;
+      const pointsStr = `${Number(info.points) / Number(tokenUnit)} ${networkConfig.tokenSymbol}`;
       const creatorStr = `//pool/${creatorIndex}`;
 
       console.log(
@@ -314,7 +321,7 @@ export async function listPools(godSeed: string) {
         for (const memberEntry of poolMembers) {
           const memberAddress = memberEntry.keyArgs[0];
           const memberInfo = memberEntry.value;
-          const memberPoints = Number(memberInfo.points) / Number(PAS);
+          const memberPoints = Number(memberInfo.points) / Number(tokenUnit);
           const unbondingEras = memberInfo.unbonding_eras;
 
           // Check if this is a member we control (O(1) lookup)
@@ -323,7 +330,7 @@ export async function listPools(godSeed: string) {
 
           const unbondingInfo = Object.keys(unbondingEras).length > 0 ? " (unbonding)" : "";
           console.log(
-            `           - ${memberAddress}: ${memberPoints} PAS${unbondingInfo}${controlledBy}`
+            `           - ${memberAddress}: ${memberPoints} ${networkConfig.tokenSymbol}${unbondingInfo}${controlledBy}`
           );
         }
       }
@@ -341,7 +348,9 @@ export async function listPools(godSeed: string) {
 
     console.log(`\n📈 Summary:`);
     console.log(`   - Total pools owned: ${ownedPools.length}`);
-    console.log(`   - Total staked: ${totalPoints / Number(PAS)} PAS`);
+    console.log(
+      `   - Total staked: ${totalPoints / Number(tokenUnit)} ${networkConfig.tokenSymbol}`
+    );
     console.log(
       `   - Pool states: ${Object.entries(states)
         .map(([state, count]) => `${state}: ${count}`)
@@ -360,7 +369,12 @@ export async function listPools(godSeed: string) {
   }
 }
 
-export async function removeFromPool(poolMembersInput: string, isDryRun: boolean, godSeed: string) {
+export async function removeFromPool(
+  poolMembersInput: string,
+  isDryRun: boolean,
+  godSeed: string,
+  network: string
+) {
   console.log("🚀 Starting PAPI Polkadot Populate - REMOVE FROM POOL MODE");
 
   // Parse input
@@ -383,11 +397,12 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
   );
   console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
 
-  const { api, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const networkConfig = getNetworkConfig(network);
 
   try {
     // Check if pool exists
-    const poolInfo = await api.query.NominationPools.BondedPools.getValue(poolId);
+    const poolInfo = await (api.query.NominationPools as any).BondedPools.getValue(poolId);
     if (!poolInfo) {
       console.log(`\n❌ Pool ${poolId} does not exist`);
       return;
@@ -395,11 +410,13 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
 
     console.log(`\n📊 Pool ${poolId} information:`);
     console.log(`   - State: ${poolInfo.state.type}`);
-    console.log(`   - Points: ${Number(poolInfo.points) / Number(PAS)} PAS`);
+    console.log(
+      `   - Points: ${Number(poolInfo.points) / Number(tokenUnit)} ${networkConfig.tokenSymbol}`
+    );
 
     // Get all members of this pool
-    const allMemberEntries = await api.query.NominationPools.PoolMembers.getEntries();
-    const poolMembers = allMemberEntries.filter((entry) => entry.value.pool_id === poolId);
+    const allMemberEntries = await (api.query.NominationPools as any).PoolMembers.getEntries();
+    const poolMembers = allMemberEntries.filter((entry: any) => entry.value.pool_id === poolId);
     console.log(`   - Total members: ${poolMembers.length}`);
 
     // Determine which members to process
@@ -470,7 +487,7 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
     } else {
       // Process specific members
       for (const targetAddress of targetMembers as string[]) {
-        const memberEntry = poolMembers.find((entry) => entry.keyArgs[0] === targetAddress);
+        const memberEntry = poolMembers.find((entry: any) => entry.keyArgs[0] === targetAddress);
         if (!memberEntry) {
           console.log(`\n⚠️  ${targetAddress} is not a member of pool ${poolId}`);
           continue;
@@ -536,12 +553,12 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
 
     console.log(`\n📋 Members to process:`);
     for (const member of membersToProcess) {
-      const memberPoints = Number(member.info.points) / Number(PAS);
+      const memberPoints = Number(member.info.points) / Number(tokenUnit);
       const unbondingEras = member.info.unbonding_eras;
       const isUnbonding = Object.keys(unbondingEras).length > 0;
       console.log(`   - ${member.address} ${member.derivationPath}:`);
       console.log(
-        `     Staked: ${memberPoints} PAS, Status: ${isUnbonding ? "Unbonding" : "Bonded"}`
+        `     Staked: ${memberPoints} ${networkConfig.tokenSymbol}, Status: ${isUnbonding ? "Unbonding" : "Bonded"}`
       );
     }
 
@@ -561,12 +578,16 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
       console.log(`\n🔍 DRY RUN: Would perform the following actions:`);
       for (const member of membersToProcess) {
         const isUnbonding = Object.keys(member.info.unbonding_eras).length > 0;
-        const memberPoints = Number(member.info.points) / Number(PAS);
+        const memberPoints = Number(member.info.points) / Number(tokenUnit);
 
         console.log(`\n   For ${member.address}:`);
         if (!isUnbonding) {
-          console.log(`     1. Unbond ${memberPoints} PAS from pool ${poolId}`);
-          console.log(`     2. Wait for unbonding period (28 days on Paseo)`);
+          console.log(
+            `     1. Unbond ${memberPoints} ${networkConfig.tokenSymbol} from pool ${poolId}`
+          );
+          console.log(
+            `     2. Wait for unbonding period (${networkConfig.unbondingDays} days on ${network})`
+          );
           console.log(`     3. Withdraw unbonded funds`);
         } else {
           console.log(`     1. Member is already unbonding`);
@@ -589,15 +610,15 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
 
     for (const member of membersToProcess) {
       const isUnbonding = Object.keys(member.info.unbonding_eras).length > 0;
-      const memberPoints = Number(member.info.points) / Number(PAS);
+      const memberPoints = Number(member.info.points) / Number(tokenUnit);
 
       console.log(`\n🔄 Processing ${member.address}...`);
 
       if (!isUnbonding && memberPoints > 0) {
         // Unbond from pool
-        console.log(`   🔗 Unbonding ${memberPoints} PAS...`);
+        console.log(`   🔗 Unbonding ${memberPoints} ${networkConfig.tokenSymbol}...`);
 
-        const unbondTx = api.tx.NominationPools.unbond({
+        const unbondTx = (api.tx.NominationPools as any).unbond({
           member_account: MultiAddress.Id(member.address),
           unbonding_points: member.info.points,
         });
@@ -635,7 +656,9 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
                       console.log(`   ❌ Unbond failed with dispatch error:`, event.dispatchError);
                       results.failed++;
                     } else {
-                      console.log(`   ✅ Successfully unbonded ${memberPoints} PAS`);
+                      console.log(
+                        `   ✅ Successfully unbonded ${memberPoints} ${networkConfig.tokenSymbol}`
+                      );
                       results.unbonded++;
                     }
                     resolve(null);
@@ -666,7 +689,7 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
         // Try to withdraw
         console.log(`   💰 Attempting to withdraw unbonded funds...`);
 
-        const withdrawTx = api.tx.NominationPools.withdraw_unbonded({
+        const withdrawTx = (api.tx.NominationPools as any).withdraw_unbonded({
           member_account: MultiAddress.Id(member.address),
           num_slashing_spans: 0,
         });
@@ -742,7 +765,9 @@ export async function removeFromPool(poolMembersInput: string, isDryRun: boolean
 
     if (results.unbonded > 0) {
       console.log(`\n⏳ Unbonding initiated for ${results.unbonded} members.`);
-      console.log(`   They must wait for the unbonding period to complete (28 days on Paseo).`);
+      console.log(
+        `   They must wait for the unbonding period to complete (${networkConfig.unbondingDays} days on ${network}).`
+      );
       console.log(`   Run this command again after the period to withdraw funds.`);
     }
   } finally {

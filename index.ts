@@ -10,6 +10,7 @@ import { createAccounts, stakeAndNominate, topupAccounts } from "./src/solo-nomi
 import { destroyPools, listPools, removeFromPool } from "./src/nomination-pools.js";
 import { listAccounts, unbondAccounts } from "./src/account-management.js";
 import { createPools, createPoolMembers, createHybridStakers } from "./src/pool-creation.js";
+import { SUPPORTED_NETWORKS } from "./src/network-config.js";
 
 // Set up CLI argument parsing
 const program = new Command();
@@ -19,6 +20,7 @@ program
   .description("Create funded accounts for staking testing on Substrate chains using PAPI")
   .version("2.0.0")
   .requiredOption("--seed <string>", "Seed phrase, hex seed (0x...), or 'dev' for development seed")
+  .requiredOption("--network <network>", `Target network (${SUPPORTED_NETWORKS.join(", ")})`)
   .option("--nominators <number>", "Number of nominator accounts to create", "100")
   .option(
     "--validators-per-nominator <number>",
@@ -30,7 +32,7 @@ program
     "Starting index for round-robin validator selection (for continuing across batches)",
     "0"
   )
-  .option("--topup <number>", "Top up accounts to specified PAS amount")
+  .option("--topup <number>", "Top up accounts to specified token amount")
   .option("--from <number>", "Starting account index for topup (inclusive)")
   .option("--to <number>", "Ending account index for topup (exclusive)")
   .option("--pools <number>", "Number of nomination pools to create", "0")
@@ -42,11 +44,11 @@ program
   )
   .option(
     "--pool-stake <number>",
-    "Initial stake amount for each pool in PAS (uses chain MinCreateBond if not specified)"
+    "Initial stake amount for each pool in tokens (uses chain MinCreateBond if not specified)"
   )
   .option(
     "--member-stake <number>",
-    "Stake amount for each pool member in PAS (uses chain MinJoinBond if not specified)"
+    "Stake amount for each pool member in tokens (uses chain MinJoinBond if not specified)"
   )
   .option("--pool-commission <number>", "Commission percentage for pools (0-100)", "10")
   .option("--destroy-pools <range>", "Destroy pools created by this tool (e.g., '1-5' or '3,7,9')")
@@ -88,6 +90,7 @@ const options = program.opts();
 async function main() {
   // Parse options
   const godSeed = options.seed;
+  const network = options.network;
   const isDryRun = options.dryRun || false;
 
   // Determine operation mode
@@ -100,7 +103,7 @@ async function main() {
   if (isListAccountsMode) {
     // List derived accounts created by this tool
     const fastMode = options.fast === true;
-    await listAccounts(godSeed, fastMode);
+    await listAccounts(godSeed, fastMode, network);
   } else if (isUnbondMode) {
     // Parse and validate account range
     try {
@@ -108,7 +111,7 @@ async function main() {
       console.log(`Parsed account indices to unbond: ${accountIds.join(", ")}`);
 
       // Execute account unbonding
-      await unbondAccounts(accountIds, isDryRun, godSeed);
+      await unbondAccounts(accountIds, isDryRun, godSeed, network);
     } catch (error) {
       console.error("❌ Error parsing account range:", error);
       console.error("   Valid formats: '1-5' (range), '3,7,9' (list), or '1-3,7,10-12' (mixed)");
@@ -116,10 +119,10 @@ async function main() {
     }
   } else if (isListMode) {
     // List pools created by this tool
-    await listPools(godSeed);
+    await listPools(godSeed, network);
   } else if (isRemoveMode) {
     // Remove members from pool
-    await removeFromPool(options.removeFromPool, isDryRun, godSeed);
+    await removeFromPool(options.removeFromPool, isDryRun, godSeed, network);
   } else if (isDestroyMode) {
     // Parse and validate pool range
     try {
@@ -127,7 +130,7 @@ async function main() {
       console.log(`Parsed pool IDs to destroy: ${poolIds.join(", ")}`);
 
       // Execute pool destruction
-      await destroyPools(poolIds, isDryRun, godSeed);
+      await destroyPools(poolIds, isDryRun, godSeed, network);
     } catch (error) {
       console.error("❌ Error parsing pool range:", error);
       console.error("   Valid formats: '1-5' (range), '3,7,9' (list), or '1-3,7,10-12' (mixed)");
@@ -181,9 +184,12 @@ async function main() {
       }
 
       // Execute topup mode
-      const { api, godSigner, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+      const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
+        godSeed,
+        network
+      );
       try {
-        const targetAmountPlanck = (PAS * BigInt(Math.floor(topupAmount * 100))) / 100n;
+        const targetAmountPlanck = (tokenUnit * BigInt(Math.floor(topupAmount * 100))) / 100n;
         await topupAccounts(
           api,
           godSigner,
@@ -191,7 +197,7 @@ async function main() {
           targetAmountPlanck,
           fromIndex,
           toIndex,
-          PAS,
+          tokenUnit,
           isDryRun
         );
       } finally {
@@ -202,7 +208,10 @@ async function main() {
         `🏊 Starting pool operations with ${poolCount} pools, ${memberCount} members, ${hybridCount} hybrids...`
       );
 
-      const { api, godSigner, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+      const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
+        godSeed,
+        network
+      );
       try {
         let createdPoolIds: number[] = [];
         let nextValidatorIndex = validatorStartIndex;
@@ -225,14 +234,14 @@ async function main() {
           console.log("🔍 Checking chain limits and existing pools...");
           const [maxPools, maxPoolMembersPerPool, maxPoolMembers, existingPools, existingMembers] =
             await Promise.all([
-              api.query.NominationPools.MaxPools.getValue(),
-              api.query.NominationPools.MaxPoolMembersPerPool.getValue(),
-              api.query.NominationPools.MaxPoolMembers.getValue(),
-              api.query.NominationPools.BondedPools.getEntries(),
-              api.query.NominationPools.PoolMembers.getEntries(),
+              (api.query.NominationPools as any).MaxPools.getValue(),
+              (api.query.NominationPools as any).MaxPoolMembersPerPool.getValue(),
+              (api.query.NominationPools as any).MaxPoolMembers.getValue(),
+              (api.query.NominationPools as any).BondedPools.getEntries(),
+              (api.query.NominationPools as any).PoolMembers.getEntries(),
             ]);
 
-          const currentPoolCount = existingPools.filter((entry) => entry.value).length;
+          const currentPoolCount = existingPools.filter((entry: any) => entry.value).length;
           const currentMemberCount = existingMembers.length;
           const availablePools = Number(maxPools) - currentPoolCount;
           const availableMemberSlots = Number(maxPoolMembers) - currentMemberCount;
@@ -308,7 +317,7 @@ async function main() {
         // Step 1: Create nomination pools
         if (poolCount > 0) {
           const poolStakeAmount = _poolStake
-            ? (PAS * BigInt(Math.floor(_poolStake * 100))) / 100n
+            ? (tokenUnit * BigInt(Math.floor(_poolStake * 100))) / 100n
             : null;
 
           const poolResult = await createPools(
@@ -318,7 +327,7 @@ async function main() {
             poolCount,
             poolStakeAmount,
             _commission,
-            PAS,
+            tokenUnit,
             isDryRun,
             noWait,
             quiet
@@ -335,11 +344,11 @@ async function main() {
           if (!isDryRun && createdPoolIds.length > 0) {
             // In a real implementation, we'd query the chain to get the actual pool IDs
             // For now, we'll assume pools are created with sequential IDs
-            const allPools = await api.query.NominationPools.BondedPools.getEntries();
+            const allPools = await (api.query.NominationPools as any).BondedPools.getEntries();
             const recentPools = allPools
-              .filter((entry) => entry.value) // Filter out null entries
-              .map((entry) => entry.keyArgs[0]) // Get pool IDs
-              .sort((a, b) => b - a) // Sort descending (most recent first)
+              .filter((entry: any) => entry.value) // Filter out null entries
+              .map((entry: any) => entry.keyArgs[0]) // Get pool IDs
+              .sort((a: any, b: any) => b - a) // Sort descending (most recent first)
               .slice(0, poolCount); // Take the most recent pools
 
             if (recentPools.length > 0) {
@@ -355,7 +364,7 @@ async function main() {
         // Step 2: Create pool members
         if (memberCount > 0 && createdPoolIds.length > 0) {
           const memberStakeAmount = _memberStake
-            ? (PAS * BigInt(Math.floor(_memberStake * 100))) / 100n
+            ? (tokenUnit * BigInt(Math.floor(_memberStake * 100))) / 100n
             : null;
 
           await createPoolMembers(
@@ -365,7 +374,7 @@ async function main() {
             memberCount,
             memberStakeAmount,
             createdPoolIds,
-            PAS,
+            tokenUnit,
             isDryRun,
             noWait,
             quiet
@@ -375,7 +384,7 @@ async function main() {
         // Step 3: Create hybrid stakers
         if (hybridCount > 0 && createdPoolIds.length > 0) {
           const memberStakeAmount = _memberStake
-            ? (PAS * BigInt(Math.floor(_memberStake * 100))) / 100n
+            ? (tokenUnit * BigInt(Math.floor(_memberStake * 100))) / 100n
             : null;
           const soloStakeAmount = null; // Use chain minimum + buffer
 
@@ -389,7 +398,7 @@ async function main() {
             createdPoolIds,
             validatorsPerNominator,
             nextValidatorIndex,
-            PAS,
+            tokenUnit,
             isDryRun,
             noWait,
             quiet
@@ -407,10 +416,13 @@ async function main() {
       }
     } else {
       // Execute solo nominator mode
-      const { api, godSigner, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+      const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
+        godSeed,
+        network
+      );
       try {
         // Get staking parameters
-        const minNominatorBond = await api.query.Staking.MinNominatorBond.getValue();
+        const minNominatorBond = await (api.query.Staking as any).MinNominatorBond.getValue();
 
         // Calculate staking parameters
         const baseBuffer = minNominatorBond / 5n; // 20% base buffer (50 PAS if minBond is 250)
@@ -439,7 +451,7 @@ async function main() {
             fixedBufferPerAccount,
             stakeAmounts,
             createdAccountIndices,
-            PAS,
+            tokenUnit,
             isDryRun,
             transferBatch,
             startIndex,
@@ -479,7 +491,7 @@ async function main() {
             stakeAmounts,
             validatorsPerNominator,
             validatorStartIndex,
-            PAS,
+            tokenUnit,
             isDryRun,
             stakeBatch,
             noWait,
@@ -513,7 +525,7 @@ async function main() {
             fixedBufferPerAccount,
             stakeAmounts,
             createdAccountIndices,
-            PAS,
+            tokenUnit,
             isDryRun,
             transferBatch,
             startIndex,
@@ -534,7 +546,7 @@ async function main() {
               stakeAmounts,
               validatorsPerNominator,
               validatorStartIndex,
-              PAS,
+              tokenUnit,
               isDryRun,
               stakeBatch,
               noWait,

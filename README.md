@@ -1,230 +1,138 @@
-# papi-polkadot-populate
+# PAPI Polkadot Populate
 
-This tool aims to
+A comprehensive tool for creating and managing staking accounts on Substrate chains using [Polkadot API (PAPI)](https://papi.how). This tool can create thousands of nominators, manage nomination pools, and perform account lifecycle operations efficiently.
 
-- Easily create several hard-derived child accounts from a funded account, fund them, and have all of them nominate.
-- Support comprehensive nomination pool operations, including pool creation, member management, and hybrid staking scenarios.
-- Top-ups existing hard-derived accounts
+## Features
 
-The stakes of these accounts use pre-determined variable amounts. Each nominator is assigned a stake amount ranging from the minimum nominator staking bond plus 20% buffer (e.g., 300 PAS if minimum is 250 PAS on Paseo) up to minimum + 100% (e.g., 500 PAS). This variability ensures that when we take the election snapshot, some accounts are included while others are not.
-
-The project is inspired by [polkadot-populate](https://github.com/shawntabrizi/polkadot-populate).
+- **Multi-Network Support**: Works with Paseo and Westend Asset Hub (extensible to other networks)
+- **Solo Staking**: Create funded accounts that bond and nominate validators
+- **Nomination Pools**: Create pools, manage members, and hybrid staking scenarios
+- **Account Management**: List, unbond, and clean up derived accounts
+- **Performance Optimized**: Batch operations, parallel processing, and split-phase execution
+- **Comprehensive Validation**: Chain limits checking and smart error handling
 
 ## Installation
-
-To install dependencies:
 
 ```bash
 bun install
 ```
 
-## Populate nominators (create accounts + bond + stake)
+## Quick Start
 
-The tool accepts the following command-line parameters:
+```bash
+# Create 5 nominators on Paseo (dry run)
+bun run index.ts --seed dev --network paseo --nominators 5 --dry-run
+
+# Create nominators on Westend Asset Hub
+bun run index.ts --seed "your seed phrase" --network westend-asset-hub --nominators 10
+```
+
+## Core Parameters
 
 ### Required Parameters
 
-- `--seed <string>` - The seed phrase or hex seed of the god account (the account that will fund all child accounts). Accepts:
-  - A valid 12-24 word mnemonic phrase
-  - A 32-byte hex string starting with `0x` (e.g., `0xf4b7d3a7f56d6e74c2b2230703be1a01ffe9c066143ff7f93d41e3d62b82327a`)
-  - The word `dev` for testing with the development seed
+- **`--seed <string>`** - Funding account seed phrase, hex seed (0x...), or 'dev' for testing
+- **`--network <network>`** - Target network: `paseo` or `westend-asset-hub`
 
-### Optional Parameters
+### Common Options
 
-- `--nominators <number>` - Number of NEW nominator accounts to create (default: 100). The tool will skip any existing accounts and create exactly this many new ones.
-- `--validators-per-nominator <number>` - Number of validators each nominator will select (default: 16)
-- `--validator-start-index <number>` - Starting index for round-robin validator selection (default: 0). Use this when creating nominators in batches to continue the even distribution.
-- `--dry-run` - Show what would happen without executing transactions (optional)
+- **`--nominators <number>`** - Number of solo nominators to create (default: 100)
+- **`--dry-run`** - Preview operations without executing transactions
+- **`--validators-per-nominator <number>`** - Validators each nominator selects (default: 16)
 
-### Performance Optimization Parameters
+## Network Support
 
-- `--start-index <number>` - Start checking from account ///N instead of ///1 (default: 1).
-- `--skip-check-account` - Skip account existence checks, assume all accounts from start-index are available. **MAXIMUM SPEED**
-- `--transfer-batch <number>` - Balance transfer batch size (default: 1000, max: 1500)
-- `--stake-batch <number>` - Staking operations batch size (default: 100, max: 250)
-- `--check-batch <number>` - Parallel account existence checks (default: 500)
-- `--no-wait` - Don't wait for transaction finalization (fire-and-forget mode)
-- `--parallel-batches <number>` - Number of batches to submit concurrently (default: 1, max: 10)
-- `--quiet` - Suppress per-account logs, show only summaries
+The tool supports multiple Substrate chains with automatic configuration:
 
-### Split Operation Parameters
+| Network               | Token | Decimals | SS58 Prefix | Usage                         |
+| --------------------- | ----- | -------- | ----------- | ----------------------------- |
+| **Paseo**             | PAS   | 10       | 0           | `--network paseo`             |
+| **Westend Asset Hub** | WND   | 12       | 42          | `--network westend-asset-hub` |
 
-- `--create-only` - Only create and fund accounts, skip bonding/nominating
-- `--stake-only` - Only bond/nominate existing accounts, skip account creation
+Each network has specific:
 
-### Examples
+- Token symbols and decimal precision
+- Explorer URLs for transaction links
+- Unbonding periods and staking parameters
+- SS58 address formatting
 
-Using a mnemonic phrase:
+**Examples:**
 
 ```bash
-bun run index.ts --seed "your twelve word mnemonic phrase goes here and should be valid"
+# Paseo testnet
+bun run index.ts --seed dev --network paseo --nominators 5
+
+# Westend Asset Hub
+bun run index.ts --seed dev --network westend-asset-hub --nominators 5
 ```
 
-Using a hex seed:
+## Solo Staking
+
+Create funded accounts that bond tokens and nominate validators.
+
+### Basic Usage
 
 ```bash
-bun run index.ts --seed "0xf4b7d3a7f56d6e74c2b2230703be1a01ffe9c066143ff7f93d41e3d62b82327a"
+# Create 10 nominators on Paseo
+bun run index.ts --seed "your seed phrase" --network paseo --nominators 10
+
+# Custom validator selection
+bun run index.ts --seed dev --network paseo --nominators 50 --validators-per-nominator 8
+
+# Dry run to preview
+bun run index.ts --seed dev --network paseo --nominators 5 --dry-run
 ```
 
-Using dev seed for testing:
+### Account Logic
+
+- Uses hard-derived accounts: `///1`, `///2`, `///3`, etc.
+- Skips existing accounts automatically
+- Each account gets: stake amount + existential deposit + transaction fees
+- Stakes vary from MinBond + 20% to MinBond + 100% for election diversity
+
+### Split Operations
+
+For large-scale operations, split into two phases for better performance:
 
 ```bash
-bun run index.ts --seed dev --nominators 5 --validators-per-nominator 10
-```
+# Phase 1: Create accounts only (fast)
+bun run index.ts --seed $SEED --network paseo --nominators 1000 --create-only \
+  --skip-check-account --transfer-batch 1000 --no-wait --quiet
 
-Creating 50 nominators with 8 validators each:
-
-```bash
-bun run index.ts --seed "your seed phrase" --nominators 50 --validators-per-nominator 8
-```
-
-Dry run mode (test without executing transactions):
-
-```bash
-bun run index.ts --seed dev --nominators 5 --dry-run
-```
-
-Execute real transactions (default behavior):
-
-```bash
-bun run index.ts --seed "your funded seed" --nominators 5
-```
-
-### Split Operations Examples
-
-**Two-phase approach for creating 30,000 nominators:**
-
-Phase 1 - Create accounts only (very fast):
-
-```bash
-# Create first 1000 accounts
-bun run index.ts --seed $SEED --nominators 1000 --start-index 1 \
-  --create-only --skip-check-account --transfer-batch 1000 --no-wait --quiet
-
-# Create second 1000 accounts
-bun run index.ts --seed $SEED --nominators 1000 --start-index 1001 \
-  --create-only --skip-check-account --transfer-batch 1000 --no-wait --quiet
-
-# Continue for all batches...
-```
-
-Phase 2 - Stake existing accounts:
-
-```bash
-# Stake first 1000 accounts
-bun run index.ts --seed $SEED --stake-only --start-index 1 --nominators 1000 \
+# Phase 2: Stake existing accounts
+bun run index.ts --seed $SEED --network paseo --stake-only --nominators 1000 \
   --skip-check-account --stake-batch 100 --no-wait --quiet
-
-# Stake second 1000 accounts
-bun run index.ts --seed $SEED --stake-only --start-index 1001 --nominators 1000 \
-  --skip-check-account --stake-batch 100 --no-wait --quiet
-
-# Continue for all batches...
 ```
-
-**Benefits of split operations:**
-
-- Better error recovery: If staking fails, account creation work is preserved
-- Independent optimization: Different batch sizes for different operation complexities
-- Flexible timing: Create accounts now, stake when needed
-- Progress tracking: Monitor each phase separately
-
-### Validator Distribution
-
-The tool uses a round-robin algorithm to ensure even distribution of nominators across validators:
-
-- Validators are assigned sequentially to each nominator
-- When creating large numbers of nominators, this ensures each validator receives a nearly equal number of nominations
-- Use `--validator-start-index` when creating nominators in batches to continue the distribution from where the previous batch ended
-
-Example for batch processing:
-
-```bash
-# First batch of 1000 nominators
-bun run index.ts --seed "your seed" --nominators 1000
-# Output shows: "Next validator index for future batches: 16"
-
-# Second batch continues from index 16
-bun run index.ts --seed "your seed" --nominators 1000 --validator-start-index 16
-```
-
-## Top-up Mode
-
-The tool also supports a top-up mode to ensure accounts have a minimum balance.
-
-### Top-up Parameters
-
-- `--seed <string>` - The seed phrase or hex seed of the god account
-- `--topup <number>` - Target balance in PAS (required for topup mode)
-- `--from <number>` - Starting account index (inclusive, required for topup mode)
-- `--to <number>` - Ending account index (exclusive, required for topup mode)
-- `--dry-run` - Show what would happen without executing transactions (optional)
-
-### Top-up Examples
-
-Top up accounts ///3 to ///31 to have at least 250 PAS each:
-
-```bash
-bun run index.ts --seed "your seed phrase" --topup 250 --from 3 --to 32
-```
-
-Dry run to see what top-ups would be needed:
-
-```bash
-bun run index.ts --seed "your seed phrase" --topup 250 --from 3 --to 32 --dry-run
-```
-
-Top up a single account (///10) to 500 PAS:
-
-```bash
-bun run index.ts --seed "your seed phrase" --topup 500 --from 10 --to 11
-```
-
-### Top-up Behavior
-
-- **Smart topup**: Only tops up accounts that have less than the target amount
-- **Precise amounts**: If account has 100 PAS and target is 250 PAS, only 150 PAS is transferred
-- **Skip sufficient accounts**: Accounts already at or above target balance are left unchanged
-- **Balance verification**: Checks god account has sufficient funds before proceeding
-- **Batch processing**: Processes multiple topups in efficient batches
-
-## Account Creation Logic
-
-The tool uses hard-derived accounts with paths like `///1`, `///2`, `///3`, etc. When you specify `--nominators N`, the tool will:
-
-1. Start checking from account `///1`
-2. Skip any accounts that already exist on-chain
-3. Continue checking sequential indices until it finds exactly N accounts that don't exist
-4. Create and fund those N new accounts
-
-For example, if you specify `--nominators 10` and accounts `///1`, `///2`, and `///5` already exist, the tool will create accounts at indices `3`, `4`, `6`, `7`, `8`, `9`, `10`, `11`, `12`, and `13` to ensure exactly 10 new accounts are created.
-
-Each new account is funded with:
-
-- Its predetermined stake amount (300-500 PAS if minimum bond is 250 PAS)
-- 1 PAS for existential deposit
-- 1 PAS buffer for transaction fees
 
 ## Nomination Pools
 
-The tool supports comprehensive nomination pool operations, including pool creation, member management, and hybrid staking scenarios. All pool operations fetch live chain parameters to ensure compliance with current network requirements.
+Create and manage nomination pools with comprehensive validation against chain limits.
+
+### Pool Creation
+
+```bash
+# Create 3 pools using chain minimums
+bun run index.ts --seed dev --network paseo --pools 3
+
+# Custom pool parameters
+bun run index.ts --seed dev --network paseo --pools 5 \
+  --pool-stake 1000 --pool-commission 5
+
+# Create pools with members
+bun run index.ts --seed dev --network paseo --pools 3 --pool-members 20 \
+  --member-stake 50
+```
 
 ### Pool Parameters
 
-- `--pools <number>` - Number of nomination pools to create (default: 0)
-- `--pool-members <number>` - Number of pool members to create (default: 0)
-- `--hybrid-stakers <number>` - Number of accounts that are both pool members and solo stakers (default: 0)
-- `--pool-stake <number>` - Initial stake amount for each pool in PAS (optional, uses chain MinCreateBond if not specified)
-- `--member-stake <number>` - Stake amount for each pool member in PAS (optional, uses chain MinJoinBond if not specified)
-- `--pool-commission <number>` - Commission percentage for pools (0-100, default: 10)
-- `--list-pools` - List all pools created by this tool (shows members)
-- `--remove-from-pool <poolId:members>` - Remove members from a pool (e.g., '10:addr1,addr2' or '10:all')
-- `--destroy-pools <range>` - Destroy pools created by this tool (e.g., '1-5' or '3,7,9')
-- `--dry-run` - Show detailed analysis without executing transactions
+- **`--pools <number>`** - Number of pools to create
+- **`--pool-members <number>`** - Members to create (requires --pools)
+- **`--hybrid-stakers <number>`** - Accounts doing both pool and solo staking
+- **`--pool-stake <number>`** - Initial pool stake amount
+- **`--member-stake <number>`** - Member stake amount
+- **`--pool-commission <number>`** - Commission percentage (default: 10)
 
-### Pool Account Organization
-
-The tool uses different derivation paths for different account types:
+### Account Types & Paths
 
 - Pool creators: `//pool/1`, `//pool/2`, etc.
 - Pool members: `//member/1`, `//member/2`, etc.
@@ -233,543 +141,237 @@ The tool uses different derivation paths for different account types:
 
 ### Chain Limits Validation
 
-The tool automatically validates all pool operations against live chain parameters and existing network state before execution:
+The tool validates against live chain parameters:
 
-- **MaxPools**: Maximum number of pools allowed on the chain (16 on Paseo)
-- **MaxPoolMembersPerPool**: Maximum members per pool (32 on Paseo)
-- **MaxPoolMembers**: Total pool members across all pools (512 on Paseo)
-- **Current Network State**: Checks existing pools and members to calculate available slots
+- **MaxPools**: Maximum pools allowed (16 on Paseo)
+- **MaxPoolMembersPerPool**: Members per pool (32 on Paseo)
+- **MaxPoolMembers**: Total members across all pools (512 on Paseo)
 
-If any limits would be exceeded, the tool exits early with clear error messages and suggestions to fix the issue.
-
-**Examples of validation errors:**
+Example validation error:
 
 ```bash
-# Too many pools
-bun run index.ts --seed "seed" --pools 20
-❌ Error: Requested 20 pools exceeds chain limit of 16
-   Reduce --pools to 16 or less
-
-# Too many members per pool
-bun run index.ts --seed "seed" --pools 2 --pool-members 100
-❌ Error: 50 members per pool exceeds chain limit of 32
-   With 2 pools and 100 members, each pool would have ~50 members
-   Either increase --pools or reduce --pool-members
-
-# Too many total pool members (checking available slots)
-bun run index.ts --seed "seed" --pools 5 --pool-members 200
-❌ Error: Requested 200 pool members but only 150 slots available
-   Current members: 362/512
-   --pool-members: 200, --hybrid-stakers: 0
-   Reduce the total to 150 or less
-
-# Not enough available pool slots
-bun run index.ts --seed "seed" --pools 10
-❌ Error: Requested 10 pools but only 3 slots available
+❌ Error: Requested 20 pools but only 3 slots available
    Current pools: 13/16
    Reduce --pools to 3 or less
-
-# No available pool slots (chain at capacity)
-bun run index.ts --seed "seed" --pools 5
-❌ Error: Requested 5 pools but only 0 slots available
-   Current pools: 16/16
-   Cannot create any pools - chain is at maximum capacity
-   Consider destroying existing pools first with --destroy-pools
-
-# No available member slots (chain at capacity)
-bun run index.ts --seed "seed" --pools 5 --pool-members 50
-❌ Error: Requested 50 pool members but only 0 slots available
-   Current members: 512/512
-   --pool-members: 50, --hybrid-stakers: 0
-   Cannot create any pool members - chain is at maximum capacity
-   Consider removing existing members first with --remove-from-pool
 ```
 
-### Pool Creation Examples
-
-**Create 3 pools using chain minimums:**
+### Pool Management
 
 ```bash
-bun run index.ts --seed "your seed phrase" --pools 3
+# List all your pools
+bun run index.ts --seed dev --network paseo --list-pools
+
+# Remove members from pool
+bun run index.ts --seed dev --network paseo --remove-from-pool "10:all" --dry-run
+
+# Destroy pools
+bun run index.ts --seed dev --network paseo --destroy-pools "1-5" --dry-run
 ```
-
-**Create pools with custom stake amounts:**
-
-```bash
-bun run index.ts --seed "your seed phrase" --pools 5 --pool-stake 1000 --pool-commission 5
-```
-
-**Create pools with members (members join newly created pools):**
-
-```bash
-bun run index.ts --seed "your seed phrase" --pools 3 --pool-members 20
-```
-
-**Create pools with custom member stakes:**
-
-```bash
-bun run index.ts --seed "your seed phrase" --pools 2 --pool-members 15 --member-stake 50
-```
-
-**High-performance pool creation (respects chain limits):**
-
-```bash
-# Create pools up to chain limit (e.g., 16 on Paseo)
-bun run index.ts --seed $SEED --pools 16 --no-wait --quiet
-
-# Create pools with members (respecting per-pool and total limits)
-bun run index.ts --seed $SEED --pools 16 --pool-members 320 --no-wait --quiet
-
-# Maximum realistic scenario for Paseo (16 pools, 32 members each = 512 total)
-bun run index.ts --seed $SEED --pools 16 --pool-members 320 --hybrid-stakers 192 \
-  --no-wait --quiet
-```
-
-**Fire-and-forget mode for realistic operations:**
-
-```bash
-# Create pools without waiting for confirmation (maximum speed within limits)
-bun run index.ts --seed $SEED --pools 16 --pool-stake 1000 \
-  --no-wait --quiet
-```
-
-### Hybrid Staking Examples
-
-Hybrid stakers are accounts that participate in both pool staking and solo staking simultaneously:
-
-**Create hybrid stakers (requires pools in same command):**
-
-```bash
-bun run index.ts --seed "your seed phrase" --pools 2 --hybrid-stakers 10
-```
-
-**Complete scenario with all staking types:**
-
-```bash
-bun run index.ts --seed "your seed phrase" --nominators 10 --pools 3 --pool-members 20 --hybrid-stakers 5
-```
-
-**Large-scale pool setup:**
-
-```bash
-bun run index.ts --seed "your seed phrase" --pools 10 --pool-members 100 --hybrid-stakers 20 --pool-stake 500 --member-stake 25
-```
-
-### Pool Management Examples
-
-**List all pools you've created (with members):**
-
-```bash
-bun run index.ts --seed "your seed phrase" --list-pools
-```
-
-**Remove members from a pool:**
-
-```bash
-# Remove specific members from pool 10
-bun run index.ts --seed "your seed phrase" --remove-from-pool "10:addr1,addr2"
-
-# Remove all controllable members from pool 10
-bun run index.ts --seed "your seed phrase" --remove-from-pool "10:all"
-
-# Dry run to see what would happen
-bun run index.ts --seed "your seed phrase" --remove-from-pool "10:all" --dry-run
-```
-
-**Destroy specific pools:**
-
-```bash
-# Destroy pools 1, 2, and 3
-bun run index.ts --seed "your seed phrase" --destroy-pools "1-3"
-
-# Destroy specific pool IDs
-bun run index.ts --seed "your seed phrase" --destroy-pools "5,8,12"
-
-# Mixed range and specific IDs
-bun run index.ts --seed "your seed phrase" --destroy-pools "1-3,7,10-12"
-
-# Dry run to see what would be destroyed
-bun run index.ts --seed "your seed phrase" --destroy-pools "1-5" --dry-run
-```
-
-**Important Notes:**
-
-- Pools can only be destroyed after all members have left
-- Members must unbond first, wait for the unbonding period (28 days on Paseo), then withdraw
-- The `--remove-from-pool` command handles both unbonding and withdrawing
-- You can only control members created by this tool with the same seed
-
-### Dry-Run Mode for Pools
-
-Pool operations support comprehensive dry-run analysis:
-
-**Analyze pool creation requirements:**
-
-```bash
-bun run index.ts --seed "your seed phrase" --pools 5 --pool-members 30 --dry-run
-```
-
-**Check hybrid staker funding needs:**
-
-```bash
-bun run index.ts --seed "your seed phrase" --pools 3 --hybrid-stakers 10 --dry-run
-```
-
-### Pool Performance Optimizations
-
-**Sequential Processing (Optimized for Chain Limits):**
-
-- **Pool Creation**: Creates pools one by one with proper error handling and retry logic
-- **Member Operations**: Sequential member funding and pool joining with round-robin pool distribution
-- **Hybrid Operations**: Combines pool joining + solo staking + nomination in atomic transactions per account
-
-**Chain Limits Compliance:**
-
-- **Validates before execution**: Checks all limits against live chain parameters before starting
-- **Realistic scenarios**: Optimized for actual chain constraints (16 pools, 32 members per pool on Paseo)
-- **Early error detection**: Exits with clear guidance if limits would be exceeded
-
-**Fire-and-Forget Mode:**
-
-- Use `--no-wait` for maximum throughput (transactions submitted without waiting for confirmation)
-- Sequential transaction submission with immediate return (no blocking on finalization)
-- Ideal for operations within chain limits where individual transaction confirmation isn't critical
-
-### Pool Behavior Details
-
-**Pool Creation:**
-
-- Each pool is created sequentially with the specified stake amount and proper error handling
-- Pool creator account serves as root, nominator, and bouncer
-- Commission is set during pool creation
-- Pool IDs are assigned sequentially by the chain and automatically detected
-- Validates against chain limits (MaxPools) before starting
-
-**Member Distribution:**
-
-- Members are distributed evenly across newly created pools using round-robin distribution
-- Members can only be created when pools are also being created (--pools required with --pool-members)
-- Each member account is funded with stake amount + buffer
-- Members automatically join their assigned pool after funding
-- Validates against MaxPoolMembersPerPool and MaxPoolMembers limits
-
-**Hybrid Staking:**
-
-- Hybrid accounts are funded with both pool stake and solo stake amounts
-- Hybrid stakers can only be created when pools are also being created (--pools required with --hybrid-stakers)
-- First joins a newly created pool, then bonds and nominates as solo staker
-- Operations executed sequentially with proper error handling
-- Nominates validators using round-robin selection for solo staking portion
-- Counted as pool members for MaxPoolMembers limit validation
-
-**Error Handling:**
-
-- Validates god account has sufficient balance before operations
-- Checks against chain limits (MaxPools, MaxPoolMembers)
-- Skips existing accounts automatically
-- Graceful handling of failed transactions
-
-### Important Usage Notes
-
-**Valid Usage Patterns:**
-
-```bash
-# ✅ Create pools only
-bun run index.ts --seed "your seed phrase" --pools 3
-
-# ✅ Create pools with members
-bun run index.ts --seed "your seed phrase" --pools 3 --pool-members 20
-
-# ✅ Create pools with hybrids
-bun run index.ts --seed "your seed phrase" --pools 2 --hybrid-stakers 10
-
-# ✅ Complete scenario
-bun run index.ts --seed "your seed phrase" --pools 3 --pool-members 20 --hybrid-stakers 5
-```
-
-**Invalid Usage Patterns:**
-
-```bash
-# ❌ Cannot create members without pools
-bun run index.ts --seed "your seed phrase" --pool-members 20
-
-# ❌ Cannot create hybrids without pools
-bun run index.ts --seed "your seed phrase" --hybrid-stakers 10
-
-# ❌ Cannot create both members and hybrids without pools
-bun run index.ts --seed "your seed phrase" --pool-members 10 --hybrid-stakers 5
-```
-
-The tool enforces that pool members and hybrid stakers can only join newly created pools within the same command execution. This ensures predictable behavior and prevents members from joining random existing pools on the network.
 
 ## Account Management
 
-The tool provides comprehensive account management capabilities to list and clean up derived accounts created by the tool.
+List and manage all derived accounts created by the tool.
 
-### Account Management Parameters
-
-- `--list-accounts` - List all derived accounts created by this tool (shows balances and staking status)
-- `--fast` - Skip staking info for faster account listing (use with --list-accounts)
-- `--unbond-accounts <range>` - Unbond, stop nominating, and prepare accounts for fund return (e.g., '1-5' or '3,7,9')
-- `--dry-run` - Show detailed analysis without executing transactions
-
-### Account Management Examples
-
-**List all derived accounts (optimized for large numbers):**
+### List Accounts
 
 ```bash
-# Normal mode: Shows balances and staking status (slower but comprehensive)
-bun run index.ts --seed "your seed phrase" --list-accounts
+# Full account listing with staking info
+bun run index.ts --seed dev --network paseo --list-accounts
 
-# Fast mode: Only shows balances, skips staking queries (much faster for 30k+ accounts)
-bun run index.ts --seed "your seed phrase" --list-accounts --fast
+# Fast mode: balances only (for large numbers)
+bun run index.ts --seed dev --network paseo --list-accounts --fast
 ```
 
-**Performance features:**
-
-- **Fast range detection**: Quickly estimates account ranges using smart sampling
-- **Progress reporting**: Shows real-time progress for large account sets
-- **Batch processing**: Processes 2000 accounts per batch for maximum speed
-- **Smart display**: Shows summary + first/last 10 accounts for large lists
-- **Fast mode**: Skip staking queries entirely for maximum speed (use --fast)
-- **Account types**: Regular nominators (///1, ///2, etc.), Pool creators (//pool/1, //pool/2, etc.), Pool members (//member/1, //member/2, etc.), Hybrid stakers (//hybrid/1, //hybrid/2, etc.)
-
-**When to use fast mode:**
-
-- ✅ Use `--fast` for 30k+ accounts when you only need addresses and balances
-- ✅ Use `--fast` when staking info is not important
-- ❌ Don't use `--fast` when you need to see staking/pool membership status
-
-**Example output for large account sets:**
+### Unbond Accounts
 
 ```bash
-👥 Regular nominators (///N):
-   🔍 Quick range estimation...
-   ⚡ Found account at index 30000, will scan 1-30500
-   📊 Checking 30,500 potential accounts...
-   ⚡ Progress: 2,000/30,500 (7%) - Found 2000 accounts in this batch
-   ⚡ Progress: 4,000/30,500 (13%) - Found 2000 accounts in this batch
-   ...
-   ✅ Regular nominators (///N): Found 30000 total accounts
+# Unbond specific accounts
+bun run index.ts --seed dev --network paseo --unbond-accounts "1-10" --dry-run
 
-   📊 Summary: 30000 accounts found
-   Range: 1 to 30000
-   📋 Showing first 10 and last 10 accounts (30000 total):
+# Mixed ranges
+bun run index.ts --seed dev --network paseo --unbond-accounts "1-5,8,10-15"
 ```
-
-**Unbond specific accounts and return funds:**
-
-```bash
-# Unbond accounts 1, 2, and 3 (checks all derivation paths automatically)
-bun run index.ts --seed "your seed phrase" --unbond-accounts "1-3"
-
-# Unbond specific account indices
-bun run index.ts --seed "your seed phrase" --unbond-accounts "5,8,12"
-
-# Mixed range and specific indices
-bun run index.ts --seed "your seed phrase" --unbond-accounts "1-3,7,10-12"
-
-# Dry run to see what would be unbonded
-bun run index.ts --seed "your seed phrase" --unbond-accounts "1-10" --dry-run
-```
-
-### Account Management Behavior
-
-**Account Discovery:**
-
-- The tool automatically detects which derivation path each account index uses
-- Checks all account types: regular nominators, pool creators, pool members, and hybrid stakers
-- Only processes accounts that have staking activities (bonded or pool membership)
 
 **Unbonding Process:**
 
-1. **Chill**: Stops nominating if the account is currently nominating validators
-2. **Unbond Solo Stakes**: Initiates unbonding from direct staking (if applicable)
-3. **Leave Pools**: Initiates unbonding from nomination pools (if applicable)
-4. **Wait Period**: Accounts must wait 28 days (on Paseo) for unbonding to complete
-5. **Withdrawal**: After the unbonding period, funds can be withdrawn and transferred
+1. Chill (stop nominating)
+2. Unbond from solo staking and/or pools
+3. Wait unbonding period (network-specific, e.g., 28 days on Paseo)
+4. Withdraw funds manually
 
-**Important Notes:**
+## Top-up Mode
 
-- The unbonding process requires a 28-day waiting period on Paseo testnet
-- Accounts can have both solo stakes and pool memberships (hybrid stakers)
-- The tool handles all staking types automatically
-- After unbonding completes, you'll need to manually withdraw and transfer funds back to the god account
-
-### Account Management Use Cases
-
-**Clean up test environment:**
+Ensure accounts have minimum balances:
 
 ```bash
-# List all accounts first to see what exists
-bun run index.ts --seed "your seed phrase" --list-accounts
+# Top up accounts to 250 tokens
+bun run index.ts --seed dev --network paseo --topup 250 --from 3 --to 32
 
-# Unbond all accounts from index 1 to 50
-bun run index.ts --seed "your seed phrase" --unbond-accounts "1-50"
-
-# Check the unbonding status
-bun run index.ts --seed "your seed phrase" --list-accounts
-```
-
-**Selective cleanup:**
-
-```bash
-# Only unbond specific problematic accounts
-bun run index.ts --seed "your seed phrase" --unbond-accounts "10,15,20-25" --dry-run
-
-# Execute after reviewing the dry run
-bun run index.ts --seed "your seed phrase" --unbond-accounts "10,15,20-25"
-```
-
-## Choose your network
-
-The project targets initially `paseo` testnet.
-PAPI dependencies for Paseo have been added via
-
-```bash
-bun papi add -n paseo paseo
-```
-
-If you want to target another network (e.g. `Westend`) simply do something like
-
-```bash
-bun papi add -n westend wnd
-```
-
-and replace the following lines in `index.ts`:
-
-```ts
-import { paseo } from "@polkadot-api/descriptors";
-import { chainSpec } from "polkadot-api/chains/paseo";
-...
-// get the safely typed API
-const api = client.getTypedApi(paseo);
-...
-const PAS = 10_000_000_000n; // 1 PAS = 10^10 planck
+# Single account top-up
+bun run index.ts --seed dev --network paseo --topup 500 --from 10 --to 11 --dry-run
 ```
 
 ## Performance Optimization
 
-The tool includes several performance optimizations that can make large-scale operations **100-1000x faster**.
-
 ### Key Performance Features
 
-1. **Start Index** - Skip checking accounts that were already processed
-2. **Skip Account Checks** - Assume all accounts from start-index are available (maximum speed)
-3. **Split Operations** - Separate account creation from staking for better performance
-4. **Parallel Account Checking** - Check hundreds of accounts simultaneously
-5. **Fire-and-Forget Mode** - Don't wait for transaction finalization
-6. **Larger Batch Sizes** - Process more operations per transaction
-7. **Parallel Batch Submission** - Submit multiple batches concurrently
-8. **Quiet Mode** - Reduce console I/O overhead
+1. **Batch Operations**: Process multiple accounts per transaction
+2. **Parallel Processing**: Check hundreds of accounts simultaneously
+3. **Skip Checks**: Assume accounts don't exist for maximum speed
+4. **Fire-and-Forget**: Submit without waiting for confirmation
+5. **Split Operations**: Separate creation from staking
 
-### Performance Examples
+### Performance Parameters
 
-**Fast creation of 1000 nominators starting from index 30001:**
+- **`--start-index <number>`** - Skip checking early accounts
+- **`--skip-check-account`** - Maximum speed (dangerous: only use if sure accounts don't exist)
+- **`--transfer-batch <number>`** - Transfer batch size (default: 1000, max: 1500)
+- **`--stake-batch <number>`** - Staking batch size (default: 100, max: 250)
+- **`--check-batch <number>`** - Parallel account checks (default: 500)
+- **`--no-wait`** - Fire-and-forget mode
+- **`--parallel-batches <number>`** - Concurrent batches (default: 1, max: 10)
+- **`--quiet`** - Suppress verbose output
+
+### High-Performance Examples
 
 ```bash
-bun run index.ts --seed $SEED \
-  --nominators 1000 \
-  --start-index 30001 \
-  --transfer-batch 1000 \
-  --stake-batch 100 \
-  --check-batch 500 \
-  --no-wait \
-  --quiet
+# Maximum speed configuration
+bun run index.ts --seed $SEED --network paseo --nominators 1000 \
+  --start-index 30001 --skip-check-account \
+  --transfer-batch 1500 --stake-batch 250 --no-wait --quiet
+
+# Conservative parallel processing
+bun run index.ts --seed $SEED --network paseo --nominators 500 \
+  --transfer-batch 1000 --stake-batch 100 --parallel-batches 3 --quiet
 ```
 
-This combines multiple optimizations:
+### Large-Scale Operations (30,000+ Nominators)
 
-- Skips checking accounts ///1 to ///30000
-- Checks 500 accounts in parallel
-- Uses larger batch sizes (1000 transfers, 100 stakes)
-- Doesn't wait for finalization
-- Suppresses verbose logging
-
-**MAXIMUM SPEED: Skip all account checks (when you know accounts don't exist):**
+**Two-Phase Approach (Recommended):**
 
 ```bash
-bun run index.ts --seed $SEED \
-  --nominators 1000 \
-  --start-index 30001 \
-  --skip-check-account \
-  --transfer-batch 1500 \
-  --stake-batch 250 \
-  --no-wait \
-  --quiet
-```
-
-This is the fastest possible configuration:
-
-- Assumes accounts ///30001 to ///31000 are available (no checks)
-- Uses maximum batch sizes
-- Fire-and-forget mode
-- No verbose output
-
-**Creating 30,000 nominators with split operations (RECOMMENDED):**
-
-Two-phase approach for maximum efficiency:
-
-```bash
-# Phase 1: Create accounts only (optimized for transfers)
+# Phase 1: Create accounts (optimized for transfers)
 for i in {0..29}; do
   start=$((i * 1000 + 1))
-  bun run index.ts --seed $SEED --nominators 1000 --start-index $start \
+  bun run index.ts --seed $SEED --network paseo --nominators 1000 --start-index $start \
     --create-only --skip-check-account --transfer-batch 1000 --no-wait --quiet
 done
 
-# Phase 2: Stake accounts only (optimized for staking)
+# Phase 2: Stake accounts (optimized for staking)
 for i in {0..29}; do
   start=$((i * 1000 + 1))
-  bun run index.ts --seed $SEED --stake-only --start-index $start --nominators 1000 \
-    --skip-check-account --stake-batch 100 --no-wait --quiet
+  bun run index.ts --seed $SEED --network paseo --stake-only --start-index $start \
+    --nominators 1000 --skip-check-account --stake-batch 100 --no-wait --quiet
 done
 ```
 
-**Single-phase approach (original method):**
+## Advanced Examples
+
+### Complete Pool Ecosystem
 
 ```bash
-# First batch (accounts ///1 to ///5000)
-bun run index.ts --seed $SEED --nominators 5000 --no-wait --quiet
-
-# Second batch (starts from ///5001, skips existing)
-bun run index.ts --seed $SEED --nominators 5000 --start-index 5001 --no-wait --quiet
-
-# Third batch (starts from ///10001, skips existing)
-bun run index.ts --seed $SEED --nominators 5000 --start-index 10001 --no-wait --quiet
-
-# Continue with more batches...
+# Create comprehensive pool setup
+bun run index.ts --seed dev --network paseo \
+  --pools 10 --pool-members 100 --hybrid-stakers 20 \
+  --pool-stake 500 --member-stake 25 --pool-commission 5
 ```
 
-**Maximum speed configuration:**
+### Mixed Staking Scenarios
 
 ```bash
-bun run index.ts --seed $SEED \
-  --nominators 1000 \
-  --start-index 20001 \
-  --transfer-batch 1500 \
-  --stake-batch 250 \
-  --check-batch 1000 \
-  --parallel-batches 10 \
-  --no-wait \
-  --quiet
+# Solo nominators + pools + hybrids
+bun run index.ts --seed dev --network paseo \
+  --nominators 50 --pools 3 --pool-members 20 --hybrid-stakers 10
 ```
 
-### When to Use Each Optimization
+### Validator Distribution
 
-- **--start-index**: Always use when continuing from a previous run
-- **--skip-check-account**: Use when you're confident accounts don't exist (maximum speed)
-- **--no-wait**: Use for bulk operations where you don't need immediate confirmation
-- **--quiet**: Use for large operations to reduce console overhead
-- **--transfer-batch**: Increase for simple account creation (max ~1500)
-- **--stake-batch**: Keep moderate for complex staking operations (max ~250)
-- **--parallel-batches**: Use carefully, too many may overwhelm the node
+The tool uses round-robin validator selection for even distribution:
 
-### Important Notes
+```bash
+# First batch
+bun run index.ts --seed dev --network paseo --nominators 1000
+# Output: "Next validator index: 16"
 
-- **--skip-check-account is dangerous**: Only use if you're certain the account range is empty
-- If accounts already exist, transfers will fail and you'll waste transaction fees
-- Fire-and-forget mode (`--no-wait`) means transactions are submitted but not confirmed
-- You can verify transaction success later using block explorers
-- Start with conservative settings and increase gradually
-- Monitor your node's performance when using aggressive parallelization
+# Second batch continues distribution
+bun run index.ts --seed dev --network paseo --nominators 1000 --validator-start-index 16
+```
+
+## Network-Specific Considerations
+
+### Paseo Testnet
+
+- Token: PAS (10 decimals)
+- Unbonding period: 28 days
+- Pool limits: 16 pools, 32 members/pool, 512 total members
+- Explorer: <https://paseo.subscan.io>
+
+### Westend Asset Hub
+
+- Token: WND (12 decimals)
+- Unbonding period: 28 days
+- Pool limits: Network-dependent
+- Explorer: <https://westmint.subscan.io>
+
+## Error Handling
+
+The tool provides comprehensive error handling:
+
+- **Chain Limit Validation**: Prevents exceeding network constraints
+- **Balance Verification**: Ensures sufficient god account funds
+- **Account Existence**: Skips existing accounts automatically
+- **Transaction Failures**: Graceful handling with clear error messages
+- **Network-Specific**: Tailored messages for each supported network
+
+## Troubleshooting
+
+### Common Issues
+
+**"Unsupported network" Error:**
+
+```bash
+❌ Unsupported network: invalid. Supported networks: paseo, westend-asset-hub
+```
+
+Use `--network paseo` or `--network westend-asset-hub`
+
+**Chain Limit Errors:**
+
+```bash
+❌ Requested 20 pools but only 3 slots available
+```
+
+Reduce the requested amount or clean up existing pools/members
+
+**Insufficient Funds:**
+Ensure your god account has adequate balance for the requested operations
+
+### Performance Tips
+
+1. **Start Small**: Test with small numbers before large operations
+2. **Use Dry Run**: Always preview operations first
+3. **Monitor Resources**: Watch node performance with aggressive parallelization
+4. **Split Large Jobs**: Use two-phase approach for 10,000+ accounts
+5. **Conservative Batches**: Start with default batch sizes
+
+## Contributing
+
+This project uses:
+
+- [PAPI](https://papi.how) for type-safe Substrate chain interactions
+- [Bun](https://bun.sh) for fast JavaScript runtime
+- [Smoldot](https://github.com/smol-dot/smoldot) for light client connectivity
+
+### Adding New Networks
+
+1. Add network to PAPI: `npx papi add <chain> -n <network-name>`
+2. Update `src/network-config.ts` with network parameters
+3. Test with dry-run operations
+
+## License
+
+[License information]
+
+## Inspiration
+
+Inspired by [polkadot-populate](https://github.com/shawntabrizi/polkadot-populate) but built with modern PAPI for better type safety and performance.
