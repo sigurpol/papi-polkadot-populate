@@ -4,6 +4,116 @@ import { getPolkadotSigner } from "polkadot-api/signer";
 import { setupApiAndConnection, cleanup } from "./common.js";
 // No direct use of DeriveFunction in this file - it's used in imported functions
 
+// Helper function to check accounts in parallel batches
+async function checkAccountBatch(
+  api: any,
+  derive: any,
+  startIndex: number,
+  endIndex: number,
+  pathPrefix: string,
+  PAS: bigint
+) {
+  const batchSize = 500; // Increased to 500 for better parallelization (read-only operations)
+  const accounts = [];
+
+  // Process all batches in parallel since API calls are read-only
+  const batchPromises = [];
+
+  for (let i = startIndex; i <= endIndex; i += batchSize) {
+    const batchEnd = Math.min(i + batchSize - 1, endIndex);
+
+    // Create a promise for each batch
+    const batchPromise = (async () => {
+      const queries = [];
+      const indices = [];
+
+      // Prepare batch queries
+      for (let index = i; index <= batchEnd; index++) {
+        const account = derive(pathPrefix + index);
+        const address = ss58Encode(account.publicKey, 0);
+        queries.push(api.query.System.Account.getValue(address));
+        indices.push({ index, address, account });
+      }
+
+      // Execute queries in parallel
+      const results = await Promise.all(queries);
+
+      // Prepare staking queries for found accounts
+      const stakingQueries = [];
+      const foundAccounts = [];
+
+      for (let j = 0; j < results.length; j++) {
+        const accountInfo = results[j];
+        const indexInfo = indices[j];
+        if (indexInfo) {
+          const { index, address } = indexInfo;
+
+          if (
+            accountInfo.nonce > 0 ||
+            accountInfo.data.free > 0n ||
+            accountInfo.data.reserved > 0n
+          ) {
+            foundAccounts.push({ index, address, accountInfo });
+            // Add staking queries
+            stakingQueries.push(
+              api.query.Staking.Ledger.getValue(address),
+              api.query.Staking.Nominators.getValue(address),
+              api.query.NominationPools.PoolMembers.getValue(address)
+            );
+          }
+        }
+      }
+
+      // Execute all staking queries in parallel
+      const stakingResults = stakingQueries.length > 0 ? await Promise.all(stakingQueries) : [];
+
+      // Process results
+      const batchAccounts = [];
+      for (let k = 0; k < foundAccounts.length; k++) {
+        const foundAccount = foundAccounts[k];
+        if (foundAccount) {
+          const { index, address, accountInfo } = foundAccount;
+          const freeBalance = Number(accountInfo.data.free) / Number(PAS);
+          const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
+
+          // Extract staking results (3 per account)
+          const baseIdx = k * 3;
+          const ledger = stakingResults[baseIdx];
+          const nominators = stakingResults[baseIdx + 1];
+          const poolMembers = stakingResults[baseIdx + 2];
+
+          batchAccounts.push({
+            index,
+            address,
+            freeBalance,
+            reservedBalance,
+            isStaking: ledger !== undefined,
+            isNominating: nominators !== undefined,
+            poolMembership: poolMembers,
+          });
+        }
+      }
+
+      return batchAccounts;
+    })();
+
+    batchPromises.push(batchPromise);
+  }
+
+  // Wait for all batches to complete
+  const batchResults = await Promise.all(batchPromises);
+
+  // Flatten results
+  for (const batch of batchResults) {
+    accounts.push(...batch);
+  }
+
+  // Sort by index for consistent output
+  accounts.sort((a, b) => a.index - b.index);
+
+  return accounts;
+}
+
 // List all derived accounts created by this tool
 export async function listAccounts(godSeed: string) {
   console.log("📋 Listing all derived accounts created by this tool...\n");
@@ -11,148 +121,95 @@ export async function listAccounts(godSeed: string) {
   const { api, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
 
   try {
-    console.log("🔍 Scanning for derived accounts...\n");
+    console.log("🔍 Scanning for derived accounts (maximum parallel mode)...\n");
+
+    // Function to find the range of existing accounts (optimized for sequential accounts)
+    const findAccountRange = async (pathPrefix: string, label: string) => {
+      console.log(`\n👥 ${label}:`);
+      console.log("   Detecting account range (assuming sequential accounts)...");
+
+      // Since we assume sequential accounts without gaps, use binary search to find the end
+      let low = 1;
+      let high = 100000; // Maximum expected accounts
+      let lastFound = 0;
+
+      // Binary search to find the last existing account
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+
+        // Check a small batch around the midpoint to determine if accounts exist here
+        const checkPoints = [mid, mid - 1, mid + 1].filter((n) => n >= 1);
+        const queries = checkPoints.map((index) => {
+          const account = derive(pathPrefix + index);
+          const address = ss58Encode(account.publicKey, 0);
+          return api.query.System.Account.getValue(address).then((info) => ({ index, info }));
+        });
+
+        const results = await Promise.all(queries);
+        const hasAccount = results.some(
+          (r) => r.info.nonce > 0 || r.info.data.free > 0n || r.info.data.reserved > 0n
+        );
+
+        if (hasAccount) {
+          lastFound = Math.max(
+            ...results
+              .filter((r) => r.info.nonce > 0 || r.info.data.free > 0n || r.info.data.reserved > 0n)
+              .map((r) => r.index)
+          );
+          low = mid + 1;
+        } else {
+          high = mid - 1;
+        }
+      }
+
+      if (lastFound === 0) {
+        console.log("   No accounts found.");
+        return;
+      }
+
+      // Add some buffer to ensure we don't miss any accounts
+      const maxIndex = Math.min(lastFound + 100, 100000);
+      console.log(`   Found accounts up to index ~${lastFound}, checking 1 to ${maxIndex}...`);
+
+      // Now check the determined range in parallel with maximum speed
+      const accounts = await checkAccountBatch(api, derive, 1, maxIndex, pathPrefix, PAS);
+
+      if (accounts.length === 0) {
+        console.log("   No accounts found.");
+        return;
+      }
+
+      // Display found accounts
+      for (const acc of accounts) {
+        const stakingStatus = acc.isStaking
+          ? acc.isNominating
+            ? "🥩 Staking & Nominating"
+            : "🥩 Staking (not nominating)"
+          : "❌ Not staking";
+
+        const poolStatus = acc.poolMembership ? "🏊 Pool member" : "";
+
+        console.log(
+          `   [${acc.index}] ${acc.address}: ${acc.freeBalance.toFixed(4)} PAS free, ${acc.reservedBalance.toFixed(
+            4
+          )} PAS reserved | ${stakingStatus} ${poolStatus}`
+        );
+      }
+
+      console.log(`   Total: ${accounts.length} accounts found`);
+    };
 
     // Check regular nominators (///1, ///2, etc.)
-    console.log("👥 Regular nominators (///N):");
-    let found = false;
-    for (let index = 1; index <= 200; index++) {
-      const account = derive(`///${index}`);
-      const address = ss58Encode(account.publicKey, 0);
-
-      // Check if account exists on chain
-      const accountInfo = await api.query.System.Account.getValue(address);
-      if (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n) {
-        found = true;
-        const freeBalance = Number(accountInfo.data.free) / Number(PAS);
-        const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
-
-        // Check staking status
-        const ledger = await api.query.Staking.Ledger.getValue(address);
-        const nominations = await api.query.Staking.Nominators.getValue(address);
-
-        let stakingInfo = "";
-        if (ledger) {
-          const bonded = Number(ledger.active) / Number(PAS);
-          stakingInfo = ` | Bonded: ${bonded} PAS`;
-          if (nominations) {
-            stakingInfo += ` | Nominating ${nominations.targets.length} validators`;
-          }
-        }
-
-        console.log(
-          `   [${index}] ${address}: ${freeBalance} PAS free, ${reservedBalance} PAS reserved${stakingInfo}`
-        );
-      }
-    }
-    if (!found) {
-      console.log("   No regular nominator accounts found");
-    }
+    await findAccountRange("///", "Regular nominators (///N)");
 
     // Check pool creators (//pool/1, //pool/2, etc.)
-    console.log("\n🏊 Pool creators (//pool/N):");
-    found = false;
-    for (let index = 1; index <= 100; index++) {
-      const account = derive(`//pool/${index}`);
-      const address = ss58Encode(account.publicKey, 0);
-
-      const accountInfo = await api.query.System.Account.getValue(address);
-      if (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n) {
-        found = true;
-        const freeBalance = Number(accountInfo.data.free) / Number(PAS);
-        const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
-
-        // Check if this account is a pool root
-        const allPoolEntries = await api.query.NominationPools.BondedPools.getEntries();
-        let poolInfo = "";
-        for (const entry of allPoolEntries) {
-          const poolId = entry.keyArgs[0];
-          const pool = entry.value;
-          if (pool && pool.roles.root === address) {
-            const poolPoints = Number(pool.points) / Number(PAS);
-            poolInfo = ` | Root of Pool ${poolId} (${poolPoints} PAS, ${pool.state.type})`;
-            break;
-          }
-        }
-
-        console.log(
-          `   [${index}] ${address}: ${freeBalance} PAS free, ${reservedBalance} PAS reserved${poolInfo}`
-        );
-      }
-    }
-    if (!found) {
-      console.log("   No pool creator accounts found");
-    }
+    await findAccountRange("//pool/", "Pool creators (//pool/N)");
 
     // Check pool members (//member/1, //member/2, etc.)
-    console.log("\n👥 Pool members (//member/N):");
-    found = false;
-    for (let index = 1; index <= 200; index++) {
-      const account = derive(`//member/${index}`);
-      const address = ss58Encode(account.publicKey, 0);
-
-      const accountInfo = await api.query.System.Account.getValue(address);
-      if (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n) {
-        found = true;
-        const freeBalance = Number(accountInfo.data.free) / Number(PAS);
-        const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
-
-        // Check pool membership
-        const poolMember = await api.query.NominationPools.PoolMembers.getValue(address);
-        let memberInfo = "";
-        if (poolMember) {
-          const memberPoints = Number(poolMember.points) / Number(PAS);
-          memberInfo = ` | Member of Pool ${poolMember.pool_id} (${memberPoints} PAS)`;
-        }
-
-        console.log(
-          `   [${index}] ${address}: ${freeBalance} PAS free, ${reservedBalance} PAS reserved${memberInfo}`
-        );
-      }
-    }
-    if (!found) {
-      console.log("   No pool member accounts found");
-    }
+    await findAccountRange("//member/", "Pool members (//member/N)");
 
     // Check hybrid stakers (//hybrid/1, //hybrid/2, etc.)
-    console.log("\n🔄 Hybrid stakers (//hybrid/N):");
-    found = false;
-    for (let index = 1; index <= 100; index++) {
-      const account = derive(`//hybrid/${index}`);
-      const address = ss58Encode(account.publicKey, 0);
-
-      const accountInfo = await api.query.System.Account.getValue(address);
-      if (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n) {
-        found = true;
-        const freeBalance = Number(accountInfo.data.free) / Number(PAS);
-        const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
-
-        // Check both pool membership and solo staking
-        const poolMember = await api.query.NominationPools.PoolMembers.getValue(address);
-        const ledger = await api.query.Staking.Ledger.getValue(address);
-        const nominations = await api.query.Staking.Nominators.getValue(address);
-
-        let hybridInfo = "";
-        if (poolMember) {
-          const memberPoints = Number(poolMember.points) / Number(PAS);
-          hybridInfo += ` | Pool member: ${memberPoints} PAS`;
-        }
-        if (ledger) {
-          const bonded = Number(ledger.active) / Number(PAS);
-          hybridInfo += ` | Solo bonded: ${bonded} PAS`;
-          if (nominations) {
-            hybridInfo += ` (nominating ${nominations.targets.length})`;
-          }
-        }
-
-        console.log(
-          `   [${index}] ${address}: ${freeBalance} PAS free, ${reservedBalance} PAS reserved${hybridInfo}`
-        );
-      }
-    }
-    if (!found) {
-      console.log("   No hybrid staker accounts found");
-    }
+    await findAccountRange("//hybrid/", "Hybrid stakers (//hybrid/N)");
 
     console.log("\n✅ Account listing complete");
   } finally {

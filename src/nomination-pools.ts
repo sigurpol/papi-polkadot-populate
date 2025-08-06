@@ -209,9 +209,49 @@ export async function listPools(godSeed: string) {
   try {
     console.log(`\n🔍 Scanning for pools created by this tool...`);
 
-    // Get all existing pools
-    const allPoolEntries = await api.query.NominationPools.BondedPools.getEntries();
+    // Get all existing pools and members in parallel
+    const [allPoolEntries, allMemberEntries] = await Promise.all([
+      api.query.NominationPools.BondedPools.getEntries(),
+      api.query.NominationPools.PoolMembers.getEntries(),
+    ]);
+
     console.log(`   Found ${allPoolEntries.length} total pools on the network`);
+
+    // Pre-generate all our pool creator addresses for fast lookup
+    const ourPoolCreators = new Map<string, number>();
+    for (let index = 1; index <= 100; index++) {
+      const poolAccount = getPoolAccountAtIndex(index, derive);
+      ourPoolCreators.set(poolAccount.address, index);
+    }
+
+    // Pre-generate all our member addresses for fast lookup
+    const ourMembers = new Map<string, { path: string; index: number }>();
+
+    // Check member paths in parallel
+    const memberChecks = [];
+    for (let i = 1; i <= 100; i++) {
+      memberChecks.push(
+        Promise.resolve().then(() => {
+          const testAccount = getPoolMemberAccountAtIndex(i, derive);
+          return { address: testAccount.address, path: `//member/${i}`, index: i };
+        })
+      );
+    }
+
+    // Check hybrid paths in parallel
+    for (let i = 1; i <= 100; i++) {
+      memberChecks.push(
+        Promise.resolve().then(() => {
+          const testAccount = getHybridAccountAtIndex(i, derive);
+          return { address: testAccount.address, path: `//hybrid/${i}`, index: i };
+        })
+      );
+    }
+
+    const memberResults = await Promise.all(memberChecks);
+    for (const { address, path } of memberResults) {
+      ourMembers.set(address, { path, index: 0 }); // index not used for members
+    }
 
     const ownedPools: Array<{
       poolId: number;
@@ -220,22 +260,20 @@ export async function listPools(godSeed: string) {
       creatorIndex: number;
     }> = [];
 
-    // Check each pool to see if we own it
+    // Check each pool to see if we own it (now with O(1) lookup)
     for (const entry of allPoolEntries) {
       const poolId = entry.keyArgs[0];
       const poolInfo = entry.value;
 
-      // Check if any of our derived accounts is the root of this pool
-      for (let index = 1; index <= 100; index++) {
-        const poolAccount = getPoolAccountAtIndex(index, derive);
-        if (poolInfo.roles.root === poolAccount.address) {
+      if (poolInfo.roles.root) {
+        const creatorIndex = ourPoolCreators.get(poolInfo.roles.root);
+        if (creatorIndex !== undefined) {
           ownedPools.push({
             poolId,
             info: poolInfo,
-            creatorAddress: poolAccount.address,
-            creatorIndex: index,
+            creatorAddress: poolInfo.roles.root,
+            creatorIndex,
           });
-          break; // Found owner, no need to check more indices
         }
       }
     }
@@ -258,11 +296,8 @@ export async function listPools(godSeed: string) {
       `${"─".repeat(8)} ${"─".repeat(12)} ${"─".repeat(15)} ${"─".repeat(8)} ${"─".repeat(10)} ${"─".repeat(50)}`
     );
 
-    // Get all member entries once
-    const allMemberEntries = await api.query.NominationPools.PoolMembers.getEntries();
-
     for (const { poolId, info, creatorAddress, creatorIndex } of ownedPools) {
-      // Get members for this pool
+      // Get members for this pool (O(n) but only once for all pools)
       const poolMembers = allMemberEntries.filter((entry) => entry.value.pool_id === poolId);
       const memberCount = poolMembers.length;
       const stateStr = info.state.type;
@@ -282,28 +317,9 @@ export async function listPools(godSeed: string) {
           const memberPoints = Number(memberInfo.points) / Number(PAS);
           const unbondingEras = memberInfo.unbonding_eras;
 
-          // Check if this is a member we control
-          let controlledBy = "";
-
-          // Check member paths
-          for (let i = 1; i <= 100; i++) {
-            const testAccount = getPoolMemberAccountAtIndex(i, derive);
-            if (testAccount.address === memberAddress) {
-              controlledBy = ` [Controlled: //member/${i}]`;
-              break;
-            }
-          }
-
-          // Check hybrid paths if not found
-          if (!controlledBy) {
-            for (let i = 1; i <= 100; i++) {
-              const testAccount = getHybridAccountAtIndex(i, derive);
-              if (testAccount.address === memberAddress) {
-                controlledBy = ` [Controlled: //hybrid/${i}]`;
-                break;
-              }
-            }
-          }
+          // Check if this is a member we control (O(1) lookup)
+          const controlledInfo = ourMembers.get(memberAddress);
+          const controlledBy = controlledInfo ? ` [Controlled: ${controlledInfo.path}]` : "";
 
           const unbondingInfo = Object.keys(unbondingEras).length > 0 ? " (unbonding)" : "";
           console.log(
