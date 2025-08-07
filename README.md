@@ -360,7 +360,6 @@ This project uses:
 
 - [PAPI](https://papi.how) for type-safe Substrate chain interactions
 - [Bun](https://bun.sh) for fast JavaScript runtime
-- [Smoldot](https://github.com/smol-dot/smoldot) for light client connectivity
 
 ### Adding New Networks
 
