@@ -26,7 +26,7 @@ export const NETWORK_CONFIGS: Record<string, NetworkConfig> = {
     ss58Prefix: 42,
     decimals: 12,
     tokenSymbol: "WND",
-    explorerUrl: "https://westmint.subscan.io",
+    explorerUrl: "https://assethub-westend.subscan.io",
     unbondingDays: 28,
     descriptorName: "westmint",
     chainSpecName: "westend2_asset_hub",
