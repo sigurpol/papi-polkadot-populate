@@ -468,7 +468,8 @@ async function main() {
             parallelBatches,
             quiet,
             skipCheckAccount,
-            baseBuffer
+            baseBuffer,
+            false // willStake = false for CREATE ONLY mode
           );
 
           console.log(
@@ -544,7 +545,8 @@ async function main() {
             parallelBatches,
             quiet,
             skipCheckAccount,
-            baseBuffer
+            baseBuffer,
+            true // willStake = true for DEFAULT MODE (will stake after)
           );
 
           // Stake and nominate

@@ -26,7 +26,8 @@ export async function createAccounts(
   _parallelBatches = 1,
   quiet = false,
   skipCheckAccount = false,
-  baseBuffer = 0n
+  baseBuffer = 0n,
+  willStake = true
 ) {
   // Use provided batch size or default
   const transferBatchSize = batchSize || 1000;
@@ -172,17 +173,28 @@ export async function createAccounts(
         // Use utility.batch_all for multiple transfers (batch_all fails all if one fails)
         const batchTx = api.tx.Utility.batch_all({ calls: batch });
 
-        if (noWait) {
-          // Fire-and-forget mode: just submit and continue
+        if (noWait && willStake) {
+          // For transfers, we MUST wait for inclusion even in noWait mode if staking will follow
+          // Otherwise the accounts won't have funds for staking
+          if (!quiet) {
+            console.log(`   ⏳ Waiting for transfer to be included (required for staking)...`);
+          }
+        } else if (noWait && !willStake) {
+          // Fire-and-forget mode for create-only: just submit and continue
           try {
             const txHash = await batchTx.signAndSubmit(godSigner);
             if (!quiet) {
               console.log(`   📋 Submitted batch transaction: ${txHash}`);
             }
+            return { createdCount, skippedCount };
           } catch (error) {
             console.error(`   ❌ Failed to submit batch:`, error);
+            return { createdCount: 0, skippedCount };
           }
-        } else {
+        }
+
+        // Wait for transfer inclusion (normal mode or noWait+willStake)
+        {
           // Wait for inclusion (original behavior)
           await new Promise((resolve, _reject) => {
             let completed = false;
@@ -210,7 +222,7 @@ export async function createAccounts(
                   if (!quiet) {
                     console.log(`   ✅ Batch included in block`);
                     console.log(`   📋 Transaction hash: ${event.txHash}`);
-                    console.log(`   🔗 https://paseo.subscan.io/extrinsic/${event.txHash}`);
+                    // Note: Explorer URL would need network config passed in to show correct link
                     console.log(`   ✅ Transaction included in block - should be successful`);
                   }
 
