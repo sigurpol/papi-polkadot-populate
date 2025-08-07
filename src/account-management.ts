@@ -2,6 +2,7 @@
 import { ss58Encode } from "@polkadot-labs/hdkd-helpers";
 import { getPolkadotSigner } from "polkadot-api/signer";
 import { setupApiAndConnection, cleanup } from "./common.js";
+import { getNetworkConfig } from "./network-config.js";
 // No direct use of DeriveFunction in this file - it's used in imported functions
 
 // Optimized function to check accounts with minimal queries and progress reporting
@@ -11,7 +12,8 @@ async function checkAccountBatch(
   startIndex: number,
   endIndex: number,
   pathPrefix: string,
-  PAS: bigint,
+  tokenUnit: bigint,
+  networkConfig: any,
   label: string,
   fastMode = false
 ) {
@@ -34,7 +36,7 @@ async function checkAccountBatch(
     for (let index = batchStart; index <= batchEnd; index++) {
       const account = derive(pathPrefix + index);
       const address = ss58Encode(account.publicKey, 0);
-      queries.push(api.query.System.Account.getValue(address));
+      queries.push((api.query.System as any).Account.getValue(address));
       indices.push({ index, address });
     }
 
@@ -52,8 +54,8 @@ async function checkAccountBatch(
         (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n)
       ) {
         const { index, address } = indexInfo;
-        const freeBalance = Number(accountInfo.data.free) / Number(PAS);
-        const reservedBalance = Number(accountInfo.data.reserved) / Number(PAS);
+        const freeBalance = Number(accountInfo.data.free) / Number(tokenUnit);
+        const reservedBalance = Number(accountInfo.data.reserved) / Number(tokenUnit);
 
         existingAccounts.push({
           index,
@@ -87,9 +89,9 @@ async function checkAccountBatch(
           );
 
           const stakingQueries = batchAccounts.flatMap((acc) => [
-            api.query.Staking.Ledger.getValue(acc.address),
-            api.query.Staking.Nominators.getValue(acc.address),
-            api.query.NominationPools.PoolMembers.getValue(acc.address),
+            (api.query.Staking as any).Ledger.getValue(acc.address),
+            (api.query.Staking as any).Nominators.getValue(acc.address),
+            (api.query.NominationPools as any).PoolMembers.getValue(acc.address),
           ]);
 
           const stakingResults = await Promise.all(stakingQueries);
@@ -130,9 +132,9 @@ async function checkAccountBatch(
       // Display up to 5 accounts per batch to avoid spam (balance info only at this point)
       const displayAccounts = existingAccounts.slice(0, 5);
       for (const acc of displayAccounts) {
-        const balanceInfo = `${(acc.freeBalance || 0).toFixed(2)} PAS free, ${(
+        const balanceInfo = `${(acc.freeBalance || 0).toFixed(2)} ${networkConfig.tokenSymbol} free, ${(
           acc.reservedBalance || 0
-        ).toFixed(2)} PAS reserved`;
+        ).toFixed(2)} ${networkConfig.tokenSymbol} reserved`;
         console.log(`      [${acc.index}] ${acc.address}: ${balanceInfo}`);
       }
 
@@ -153,12 +155,13 @@ async function checkAccountBatch(
 }
 
 // List all derived accounts created by this tool
-export async function listAccounts(godSeed: string, fastMode = false) {
+export async function listAccounts(godSeed: string, fastMode = false, network: string) {
   console.log(
     `📋 Listing all derived accounts created by this tool${fastMode ? " (fast mode - no staking info)" : ""}...\n`
   );
 
-  const { api, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const networkConfig = getNetworkConfig(network);
 
   try {
     console.log("🔍 Scanning for derived accounts (maximum parallel mode)...\n");
@@ -175,7 +178,7 @@ export async function listAccounts(godSeed: string, fastMode = false) {
       for (const testIndex of estimatePoints) {
         const account = derive(pathPrefix + testIndex);
         const address = ss58Encode(account.publicKey, 0);
-        const accountInfo = await api.query.System.Account.getValue(address);
+        const accountInfo = await (api.query.System as any).Account.getValue(address);
 
         if (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n) {
           maxEstimate = testIndex;
@@ -197,7 +200,8 @@ export async function listAccounts(godSeed: string, fastMode = false) {
         1,
         maxIndex,
         pathPrefix,
-        PAS,
+        tokenUnit,
+        networkConfig,
         label,
         fastMode
       );
@@ -216,7 +220,7 @@ export async function listAccounts(godSeed: string, fastMode = false) {
         const totalFree = accounts.reduce((sum, acc) => sum + (acc.freeBalance || 0), 0);
         const totalReserved = accounts.reduce((sum, acc) => sum + (acc.reservedBalance || 0), 0);
         console.log(
-          `   Total balances: ${totalFree.toFixed(2)} PAS free, ${totalReserved.toFixed(2)} PAS reserved`
+          `   Total balances: ${totalFree.toFixed(2)} ${networkConfig.tokenSymbol} free, ${totalReserved.toFixed(2)} ${networkConfig.tokenSymbol} reserved`
         );
 
         if (!fastMode) {
@@ -253,12 +257,18 @@ export async function listAccounts(godSeed: string, fastMode = false) {
 }
 
 // Unbond accounts and return funds to god account
-export async function unbondAccounts(accountIndices: number[], isDryRun: boolean, godSeed: string) {
+export async function unbondAccounts(
+  accountIndices: number[],
+  isDryRun: boolean,
+  godSeed: string,
+  network: string
+) {
   console.log(
     `🔓 ${isDryRun ? "DRY RUN: " : ""}Unbonding ${accountIndices.length} account(s) and returning funds to god account...\n`
   );
 
-  const { api, derive, PAS, smoldot, client } = await setupApiAndConnection(godSeed);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const networkConfig = getNetworkConfig(network);
 
   try {
     if (isDryRun) {
@@ -292,12 +302,12 @@ export async function unbondAccounts(accountIndices: number[], isDryRun: boolean
         const account = derive(path);
         const address = ss58Encode(account.publicKey, 0);
 
-        const accountInfo = await api.query.System.Account.getValue(address);
+        const accountInfo = await (api.query.System as any).Account.getValue(address);
         if (accountInfo.nonce > 0 || accountInfo.data.free > 0n || accountInfo.data.reserved > 0n) {
           // Account exists, check staking status
-          const ledger = await api.query.Staking.Ledger.getValue(address);
-          const nominations = await api.query.Staking.Nominators.getValue(address);
-          const poolMember = await api.query.NominationPools.PoolMembers.getValue(address);
+          const ledger = await (api.query.Staking as any).Ledger.getValue(address);
+          const nominations = await (api.query.Staking as any).Nominators.getValue(address);
+          const poolMember = await (api.query.NominationPools as any).PoolMembers.getValue(address);
 
           const freeBalance = accountInfo.data.free;
           const bondedAmount = ledger ? ledger.active : 0n;
@@ -323,15 +333,17 @@ export async function unbondAccounts(accountIndices: number[], isDryRun: boolean
             if (isDryRun) {
               console.log(`   [${index}] ${type} (${path})`);
               console.log(`        Address: ${address}`);
-              console.log(`        Free: ${Number(freeBalance) / Number(PAS)} PAS`);
+              console.log(
+                `        Free: ${Number(freeBalance) / Number(tokenUnit)} ${networkConfig.tokenSymbol}`
+              );
               if (bondedAmount > 0n) {
                 console.log(
-                  `        Bonded: ${Number(bondedAmount) / Number(PAS)} PAS${isNominating ? " (nominating)" : ""}`
+                  `        Bonded: ${Number(bondedAmount) / Number(tokenUnit)} ${networkConfig.tokenSymbol}${isNominating ? " (nominating)" : ""}`
                 );
               }
               if (poolMemberPoints > 0n) {
                 console.log(
-                  `        Pool member: ${Number(poolMemberPoints) / Number(PAS)} PAS (Pool ${poolId})`
+                  `        Pool member: ${Number(poolMemberPoints) / Number(tokenUnit)} ${networkConfig.tokenSymbol} (Pool ${poolId})`
                 );
               }
               console.log("");
@@ -350,8 +362,12 @@ export async function unbondAccounts(accountIndices: number[], isDryRun: boolean
     if (isDryRun) {
       console.log(`📊 Summary:`);
       console.log(`   Accounts to unbond: ${accountsToUnbond.length}`);
-      console.log(`   Total funds to return: ${Number(totalToReturn) / Number(PAS)} PAS`);
-      console.log(`   God account would receive: ${Number(totalToReturn) / Number(PAS)} PAS`);
+      console.log(
+        `   Total funds to return: ${Number(totalToReturn) / Number(tokenUnit)} ${networkConfig.tokenSymbol}`
+      );
+      console.log(
+        `   God account would receive: ${Number(totalToReturn) / Number(tokenUnit)} ${networkConfig.tokenSymbol}`
+      );
       console.log("\n   Operations that would be performed:");
 
       for (const account of accountsToUnbond) {
@@ -360,13 +376,15 @@ export async function unbondAccounts(accountIndices: number[], isDryRun: boolean
           console.log(`      1. Chill (stop nominating)`);
         }
         if (account.bondedAmount > 0n) {
-          console.log(`      2. Unbond ${Number(account.bondedAmount) / Number(PAS)} PAS`);
+          console.log(
+            `      2. Unbond ${Number(account.bondedAmount) / Number(tokenUnit)} ${networkConfig.tokenSymbol}`
+          );
           console.log(`      3. Wait 28 days for unbonding period`);
           console.log(`      4. Withdraw unbonded funds`);
         }
         if (account.poolMemberPoints > 0n) {
           console.log(
-            `      2. Unbond from pool ${account.poolId} (${Number(account.poolMemberPoints) / Number(PAS)} PAS)`
+            `      2. Unbond from pool ${account.poolId} (${Number(account.poolMemberPoints) / Number(tokenUnit)} ${networkConfig.tokenSymbol})`
           );
           console.log(`      3. Wait 28 days for unbonding period`);
           console.log(`      4. Withdraw from pool`);
@@ -405,26 +423,26 @@ export async function unbondAccounts(accountIndices: number[], isDryRun: boolean
         // 1. Chill if nominating
         if (account.isNominating) {
           console.log(`   Chilling (stopping nominations)...`);
-          transactions.push(api.tx.Staking.chill());
+          transactions.push((api.tx.Staking as any).chill());
           results.chilled++;
         }
 
         // 2. Unbond from solo staking
         if (account.bondedAmount > 0n) {
           console.log(
-            `   Unbonding ${Number(account.bondedAmount) / Number(PAS)} PAS from solo staking...`
+            `   Unbonding ${Number(account.bondedAmount) / Number(tokenUnit)} ${networkConfig.tokenSymbol} from solo staking...`
           );
-          transactions.push(api.tx.Staking.unbond({ value: account.bondedAmount }));
+          transactions.push((api.tx.Staking as any).unbond({ value: account.bondedAmount }));
           results.unbonded++;
         }
 
         // 3. Leave pool (unbond from pool)
         if (account.poolMemberPoints > 0n) {
           console.log(
-            `   Unbonding ${Number(account.poolMemberPoints) / Number(PAS)} PAS from pool ${account.poolId}...`
+            `   Unbonding ${Number(account.poolMemberPoints) / Number(tokenUnit)} ${networkConfig.tokenSymbol} from pool ${account.poolId}...`
           );
           transactions.push(
-            api.tx.NominationPools.unbond({
+            (api.tx.NominationPools as any).unbond({
               member_account: { type: "Id", value: account.address },
               unbonding_points: account.poolMemberPoints,
             })
@@ -438,7 +456,7 @@ export async function unbondAccounts(accountIndices: number[], isDryRun: boolean
           if (transactions.length === 1) {
             tx = transactions[0];
           } else {
-            tx = api.tx.Utility.batch_all({
+            tx = (api.tx.Utility as any).batch_all({
               calls: transactions.map((t) => t.decodedCall),
             });
           }
@@ -508,7 +526,7 @@ export async function unbondAccounts(accountIndices: number[], isDryRun: boolean
 
     if (results.unbonded > 0 || results.poolLeft > 0) {
       console.log(
-        `\n⏳ Unbonding initiated. Accounts must wait for the unbonding period (28 days on Paseo).`
+        `\n⏳ Unbonding initiated. Accounts must wait for the unbonding period (${networkConfig.unbondingDays} days on ${network}).`
       );
       console.log(`   After the unbonding period, you can:`);
       console.log(`   1. Use Staking.withdraw_unbonded() to withdraw solo staking funds`);
