@@ -121,8 +121,7 @@ export async function createPools(
   poolCount: number,
   poolStake: bigint | null,
   commission: number,
-  tokenUnit: bigint,
-  tokenSymbol: string,
+  PAS: bigint,
   isDryRun: boolean,
   noWait = false,
   quiet = false
@@ -140,7 +139,7 @@ export async function createPools(
 
   if (!quiet) {
     console.log(`\n🏊 Creating ${poolCount} nomination pools...`);
-    console.log(`   📊 Pool stake: ${Number(actualPoolStake) / Number(tokenUnit)} ${tokenSymbol} each`);
+    console.log(`   📊 Pool stake: ${Number(actualPoolStake) / Number(PAS)} PAS each`);
     console.log(`   📊 Commission: ${commission}%`);
     console.log(
       `   📊 Chain limits: ${poolParams.maxPools} max pools, ${poolParams.maxPoolMembersPerPool} max members per pool`
@@ -195,7 +194,7 @@ export async function createPools(
   console.log(`\n📊 Pool Creation Summary:`);
   console.log(`   - Pools requested: ${poolCount}`);
   console.log(`   - Pools created: ${createdPools.length}`);
-  console.log(`   - Total funding used: ${Number(totalFundingNeeded) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(`   - Total funding used: ${Number(totalFundingNeeded) / Number(PAS)} PAS`);
 
   return { createdPools, totalFundingNeeded };
 }
@@ -208,8 +207,7 @@ export async function createPoolMembers(
   memberCount: number,
   memberStake: bigint | null,
   createdPoolIds: number[],
-  tokenUnit: bigint,
-  tokenSymbol: string,
+  PAS: bigint,
   isDryRun: boolean,
   noWait = false,
   quiet = false
@@ -232,7 +230,7 @@ export async function createPoolMembers(
 
   if (!quiet) {
     console.log(`\n👥 Creating ${memberCount} pool members...`);
-    console.log(`   📊 Member stake: ${Number(actualMemberStake) / Number(tokenUnit)} ${tokenSymbol} each`);
+    console.log(`   📊 Member stake: ${Number(actualMemberStake) / Number(PAS)} PAS each`);
     console.log(`   📊 Joining ${createdPoolIds.length} pools (round-robin)`);
   }
 
@@ -291,7 +289,7 @@ export async function createPoolMembers(
   console.log(`\n📊 Pool Member Summary:`);
   console.log(`   - Members requested: ${memberCount}`);
   console.log(`   - Members created: ${createdMembers}`);
-  console.log(`   - Total funding used: ${Number(totalFundingNeeded) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(`   - Total funding used: ${Number(totalFundingNeeded) / Number(PAS)} PAS`);
 
   return { createdMembers, totalFundingNeeded };
 }
@@ -307,8 +305,7 @@ export async function createHybridStakers(
   createdPoolIds: number[],
   validatorsPerHybrid: number,
   validatorStartIndex: number,
-  tokenUnit: bigint,
-  tokenSymbol: string,
+  PAS: bigint,
   isDryRun: boolean,
   noWait = false,
   quiet = false
@@ -333,10 +330,10 @@ export async function createHybridStakers(
 
   if (!quiet) {
     console.log(`\n🔄 Creating ${hybridCount} hybrid stakers...`);
-    console.log(`   📊 Pool stake: ${Number(actualMemberStake) / Number(tokenUnit)} ${tokenSymbol}`);
-    console.log(`   📊 Solo stake: ${Number(actualSoloStake) / Number(tokenUnit)} ${tokenSymbol}`);
+    console.log(`   📊 Pool stake: ${Number(actualMemberStake) / Number(PAS)} PAS`);
+    console.log(`   📊 Solo stake: ${Number(actualSoloStake) / Number(PAS)} PAS`);
     console.log(
-      `   📊 Total per account: ${Number(actualMemberStake + actualSoloStake + fundingBuffer) / Number(tokenUnit)} ${tokenSymbol}`
+      `   📊 Total per account: ${Number(actualMemberStake + actualSoloStake + fundingBuffer) / Number(PAS)} PAS`
     );
   }
 
@@ -427,7 +424,7 @@ export async function createHybridStakers(
   console.log(`\n📊 Hybrid Staker Summary:`);
   console.log(`   - Hybrids requested: ${hybridCount}`);
   console.log(`   - Hybrids created: ${createdHybrids}`);
-  console.log(`   - Total funding used: ${Number(totalFundingNeeded) / Number(tokenUnit)} ${tokenSymbol}`);
+  console.log(`   - Total funding used: ${Number(totalFundingNeeded) / Number(PAS)} PAS`);
   console.log(`   - Next validator index: ${currentValidatorIndex}`);
 
   return { createdHybrids, totalFundingNeeded, nextValidatorIndex: currentValidatorIndex };

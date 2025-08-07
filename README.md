@@ -309,7 +309,7 @@ bun run index.ts --seed dev --network paseo --nominators 1000 --validator-start-
 ### Westend Asset Hub
 
 - Token: WND (12 decimals)
-- Unbonding period: 7 days
+- Unbonding period: 28 days
 - Pool limits: Network-dependent
 - Explorer: <https://westmint.subscan.io>
 
