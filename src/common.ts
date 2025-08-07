@@ -23,8 +23,28 @@ export async function setupApiAndConnection(godSeed: string, network: string) {
   const descriptor = (descriptorsModule as any)[networkConfig.descriptorName];
 
   // Create the client with smoldot
+  console.log(`🔗 Initializing smoldot for ${network}...`);
   const smoldot = start();
-  const client = createClient(getSmProvider(smoldot.addChain({ chainSpec })));
+
+  let chain;
+  if (network === "westend-asset-hub") {
+    // For Westend Asset Hub parachain, we need to connect to Westend relay chain first
+    console.log(`📡 Adding Westend relay chain to smoldot...`);
+    const westendModule = await import("polkadot-api/chains/westend2");
+    const westendChain = await smoldot.addChain({ chainSpec: westendModule.chainSpec });
+
+    console.log(`📡 Adding Westend Asset Hub parachain to smoldot...`);
+    chain = await smoldot.addChain({
+      chainSpec,
+      potentialRelayChains: [westendChain],
+    });
+  } else {
+    // For relay chains like Paseo
+    console.log(`📡 Adding chain to smoldot (this may take a moment for Asset Hub chains)...`);
+    chain = await smoldot.addChain({ chainSpec });
+  }
+
+  const client = createClient(getSmProvider(chain));
 
   // Get the safely typed API
   const api = client.getTypedApi(descriptor);
@@ -38,16 +58,44 @@ export async function setupApiAndConnection(godSeed: string, network: string) {
   // Get token unit for this network
   const tokenUnit = getTokenUnit(network);
 
-  // Check god account balance
-  const accountInfo = await (api.query.System as any).Account.getValue(godAddress);
-  const godBalance = accountInfo.data.free;
+  // Check god account balance with timeout
   console.log(
-    `💰 God account balance: ${godBalance} (${Number(godBalance) / Number(tokenUnit)} ${networkConfig.tokenSymbol}) free, ${
-      accountInfo.data.reserved
-    } (${Number(accountInfo.data.reserved) / Number(tokenUnit)} ${networkConfig.tokenSymbol}) reserved`
+    `🔍 Querying account balance for ${network} (this may take longer for Asset Hub to sync)...`
   );
 
-  return { api, derive, godKeyPair, godSigner, godAddress, godBalance, tokenUnit, smoldot, client };
+  let accountInfo;
+  try {
+    accountInfo = await Promise.race([
+      (api.query.System as any).Account.getValue(godAddress),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("Account query timeout after 60 seconds")), 60000);
+      }),
+    ]);
+
+    const godBalance = accountInfo.data.free;
+    console.log(
+      `💰 God account balance: ${godBalance} (${Number(godBalance) / Number(tokenUnit)} ${networkConfig.tokenSymbol}) free, ${
+        accountInfo.data.reserved
+      } (${Number(accountInfo.data.reserved) / Number(tokenUnit)} ${networkConfig.tokenSymbol}) reserved`
+    );
+  } catch (error) {
+    console.error(`❌ Failed to query account balance: ${error}`);
+    console.log(`💡 This often indicates the chain is slow to sync or has connectivity issues`);
+    console.log(`💡 For faster connectivity, consider using a public RPC endpoint`);
+    throw error;
+  }
+
+  return {
+    api,
+    derive,
+    godKeyPair,
+    godSigner,
+    godAddress,
+    godBalance: accountInfo.data.free,
+    tokenUnit,
+    smoldot,
+    client,
+  };
 }
 
 // Common function to cleanup connections
