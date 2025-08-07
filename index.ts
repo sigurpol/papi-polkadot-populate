@@ -184,7 +184,7 @@ async function main() {
       }
 
       // Execute topup mode
-      const { api, godSigner, derive, tokenUnit, client } = await setupApiAndConnection(
+      const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
         godSeed,
         network
       );
@@ -203,14 +203,14 @@ async function main() {
           isDryRun
         );
       } finally {
-        cleanup(client);
+        cleanup(smoldot, client);
       }
     } else if (isPoolMode) {
       console.log(
         `🏊 Starting pool operations with ${poolCount} pools, ${memberCount} members, ${hybridCount} hybrids...`
       );
 
-      const { api, godSigner, derive, tokenUnit, client } = await setupApiAndConnection(
+      const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
         godSeed,
         network
       );
@@ -418,11 +418,11 @@ async function main() {
           console.log(`📌 Next validator index for future operations: ${nextValidatorIndex}`);
         }
       } finally {
-        cleanup(client);
+        cleanup(smoldot, client);
       }
     } else {
       // Execute solo nominator mode
-      const { api, godSigner, derive, tokenUnit, client } = await setupApiAndConnection(
+      const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
         godSeed,
         network
       );
@@ -574,7 +574,7 @@ async function main() {
           }
         }
       } finally {
-        cleanup(client);
+        cleanup(smoldot, client);
       }
     }
   }
