@@ -48,13 +48,13 @@ export async function createAccounts(
     }
   }
 
-  let accountIndex = startIndex; // Start checking from specified index
   let createdCount = 0;
   let skippedCount = 0;
   let totalStakeAmount = 0n;
 
   // Account status tracking
   const accountStatuses = new Map<number, boolean>(); // true = needs creation
+  const availableIndices: number[] = []; // Track available indices for creation
 
   if (skipCheckAccount) {
     // Skip all account existence checks - assume all accounts from startIndex are available
@@ -66,29 +66,36 @@ export async function createAccounts(
 
     // Pre-populate statuses assuming all accounts need creation
     for (let i = 0; i < targetCount; i++) {
-      accountStatuses.set(startIndex + i, true);
+      const index = startIndex + i;
+      accountStatuses.set(index, true);
+      availableIndices.push(index);
     }
   } else {
     // Do the normal account checking process
-    // Pre-calculate accounts to check for parallel checking
-    const accountsToCheck: { index: number; address: string }[] = [];
-    const estimatedAccountsNeeded = targetCount + Math.floor(targetCount * 0.5); // Add 50% buffer
+    // Keep checking until we find enough free accounts
+    let currentCheckIndex = startIndex;
+    const maxChecks = 10000; // Safety limit to prevent infinite loops
+    let totalChecked = 0;
 
-    for (let i = startIndex; i < startIndex + estimatedAccountsNeeded; i++) {
-      const account = getAccountAtIndex(i, derive);
-      accountsToCheck.push({ index: i, address: account.address });
-    }
-
-    // Check accounts in parallel batches
     if (!quiet) {
-      console.log(`\n🔍 Checking ${accountsToCheck.length} accounts for availability...`);
+      console.log(`\n🔍 Searching for ${targetCount} available account indices...`);
     }
 
-    for (let i = 0; i < accountsToCheck.length; i += checkBatchSize) {
-      const checkBatch = accountsToCheck.slice(
-        i,
-        Math.min(i + checkBatchSize, accountsToCheck.length)
+    while (availableIndices.length < targetCount && totalChecked < maxChecks) {
+      // Build batch of accounts to check
+      const checkBatch: { index: number; address: string }[] = [];
+      const batchEndIndex = Math.min(
+        currentCheckIndex + checkBatchSize,
+        currentCheckIndex + (targetCount - availableIndices.length) * 2
       );
+
+      for (let i = currentCheckIndex; i < batchEndIndex && totalChecked < maxChecks; i++) {
+        const account = getAccountAtIndex(i, derive);
+        checkBatch.push({ index: i, address: account.address });
+        totalChecked++;
+      }
+
+      if (checkBatch.length === 0) break;
 
       // Check batch in parallel with timeout
       const checkPromises = checkBatch.map(async ({ index, address }) => {
@@ -122,67 +129,107 @@ export async function createAccounts(
 
       const results = await Promise.all(checkPromises);
 
-      // Store results
+      // Store results and collect available indices
       for (const { index, shouldCreate } of results) {
         accountStatuses.set(index, shouldCreate);
-        if (!shouldCreate) {
+        if (shouldCreate) {
+          availableIndices.push(index);
+          if (!quiet) {
+            console.log(`   ✅ Found available index: ${index}`);
+          }
+        } else {
           skippedCount++;
+          if (!quiet) {
+            console.log(`   ⏭️  Index ${index} already exists, skipping`);
+          }
         }
       }
 
-      // Check if we have enough accounts to create
-      const availableForCreation = Array.from(accountStatuses.values()).filter((v) => v).length;
-      if (availableForCreation >= targetCount) {
-        if (!quiet) {
-          console.log(`   ✅ Found ${availableForCreation} available account slots`);
-        }
-        break;
+      // Move to next batch
+      currentCheckIndex = batchEndIndex;
+
+      // Show progress
+      if (!quiet && availableIndices.length > 0) {
+        console.log(
+          `   📊 Progress: Found ${availableIndices.length}/${targetCount} available indices`
+        );
+      }
+    }
+
+    if (availableIndices.length < targetCount) {
+      console.warn(
+        `⚠️  Only found ${availableIndices.length} available indices out of ${targetCount} requested after checking ${totalChecked} accounts.`
+      );
+      if (availableIndices.length === 0) {
+        console.error(
+          `❌ No available account indices found. Consider using --skip-check-account flag.`
+        );
+        return;
+      }
+    } else {
+      if (!quiet) {
+        console.log(`   ✅ Found all ${availableIndices.length} required account indices`);
       }
     }
   }
 
-  // Now create accounts using the pre-determined statuses
+  // Now create accounts using the available indices
   if (!quiet) {
     console.log(`\n📝 Starting account creation phase...`);
+    console.log(
+      `   📋 Account indices to use: ${availableIndices.slice(0, 5).join(", ")}${availableIndices.length > 5 ? "..." : ""}`
+    );
   }
-  accountIndex = startIndex;
 
-  while (createdCount < targetCount) {
+  // Process available indices in batches
+  let processedIndices = 0;
+
+  while (processedIndices < availableIndices.length) {
+    if (!quiet) {
+      console.log(`🔄 Creating batch ${Math.floor(processedIndices / transferBatchSize) + 1}...`);
+    }
     const batch = [];
 
-    // Build batch of transfers
-    while (batch.length < transferBatchSize && createdCount < targetCount) {
-      // Use pre-checked status
-      const shouldCreate = accountStatuses.get(accountIndex) ?? false;
+    // Build batch of transfers using available indices
+    const batchEndIndex = Math.min(processedIndices + transferBatchSize, availableIndices.length);
 
-      if (shouldCreate) {
-        const account = getAccountAtIndex(accountIndex, derive);
-        // Calculate stake for this account based on how many we've created
-        // Add base buffer (20% of minBond) plus variable amount (0-80% of minBond)
-        const variableAmount = (stakeRange * BigInt(createdCount % 10)) / 9n;
-        const stakeAmount = minNominatorBond + baseBuffer + variableAmount;
-        stakeAmounts.set(accountIndex, stakeAmount);
-        createdAccountIndices.push(accountIndex);
-        totalStakeAmount += stakeAmount;
+    for (let i = processedIndices; i < batchEndIndex; i++) {
+      const accountIndex = availableIndices[i];
+      if (accountIndex === undefined) continue; // Safety check
 
-        // Fund with exact stake amount + fixed buffer
-        const fundingAmount = stakeAmount + fixedBufferPerAccount;
-        if (!quiet) {
-          console.log(
-            `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(tokenUnit)} ${tokenSymbol} (stake: ${Number(stakeAmount) / Number(tokenUnit)} ${tokenSymbol})`
-          );
-          console.log(`🔄 Building transfer transaction...`);
-        }
-        // Use transfer_allow_death for creating new accounts
-        const transfer = api.tx.Balances.transfer_allow_death({
-          dest: MultiAddress.Id(account.address),
-          value: fundingAmount,
-        });
-        batch.push(transfer.decodedCall);
-        createdCount++;
+      const account = getAccountAtIndex(accountIndex, derive);
+
+      // Calculate stake for this account based on how many we've created
+      // Add base buffer (20% of minBond) plus variable amount (0-80% of minBond)
+      const variableAmount = (stakeRange * BigInt(createdCount % 10)) / 9n;
+      const stakeAmount = minNominatorBond + baseBuffer + variableAmount;
+      stakeAmounts.set(accountIndex, stakeAmount);
+      createdAccountIndices.push(accountIndex);
+      totalStakeAmount += stakeAmount;
+
+      // Fund with exact stake amount + fixed buffer
+      const fundingAmount = stakeAmount + fixedBufferPerAccount;
+      if (!quiet) {
+        console.log(
+          `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(tokenUnit)} ${tokenSymbol} (stake: ${Number(stakeAmount) / Number(tokenUnit)} ${tokenSymbol})`
+        );
       }
 
-      accountIndex++;
+      // Use transfer_allow_death for creating new accounts
+      const transfer = api.tx.Balances.transfer_allow_death({
+        dest: MultiAddress.Id(account.address),
+        value: fundingAmount,
+      });
+
+      batch.push(transfer.decodedCall);
+      createdCount++;
+    }
+
+    processedIndices = batchEndIndex;
+
+    // This should not happen anymore since we pre-found all available indices
+    if (batch.length === 0) {
+      break; // Exit the loop
     }
 
     // Execute batch if we have transfers
@@ -317,7 +364,11 @@ export async function createAccounts(
   console.log(`\n📊 Account Creation Summary:`);
   console.log(`   - New accounts created: ${createdCount}`);
   console.log(`   - Existing accounts skipped: ${skippedCount}`);
-  console.log(`   - Account indices used: ${createdAccountIndices.join(", ")}`);
+  const indicesToShow =
+    createdAccountIndices.length > 10
+      ? `${createdAccountIndices.slice(0, 10).join(", ")}... (and ${createdAccountIndices.length - 10} more)`
+      : createdAccountIndices.join(", ");
+  console.log(`   - Account indices used: ${indicesToShow}`);
 
   // Now check if we have enough balance
   const totalFixedBuffer = fixedBufferPerAccount * BigInt(createdCount);
