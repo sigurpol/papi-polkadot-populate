@@ -67,7 +67,7 @@ You should have received the seed of the test account `14iw76ZmY7BzFfBYrTrCnMyAz
 
 # Test via --dry-run
 
-Each command supports the `--dry-run` option, which shows what the tool would do w/o actually submitting anything. It's usually fast and give you a basic confidence on what the tool will perform for real.
+Each command supports the `--dry-run` option, which shows what the tool would do w/o actually submitting anything. It's very fast and give you a basic confidence on what the tool will perform for real.
 
 # [Optional - You can skip it] Test Creation and Staking of accounts on WAH 
 
@@ -88,17 +88,19 @@ If you feel adventurous, you can experiment with all the options described in th
 
 ## Smoldot for the win, I hope...
 Enough with the experiments, back to the core point of this document: let these 30k nominate!
-Now, the creation of 30k via the script was a breeze and blazingly fast because it was easy to group and parallelize transactions coming all from the same base account. For staking, we have 30k accounts  and each of them needs to submit a request to bond and nominate so optimization is harded.
+Now, the creation of 30k via the script was a breeze and blazingly fast because it was easy to group and parallelize transactions coming all from the same base account. For staking, we have 30k accounts  and each of them needs to submit a request to bond and nominate so optimization is harder.
 
 I have experimented with a single remote RPC and I couldn't really batch stuff without hitting severe rate limiting. Same with a list of round-robin RPC nodes, still not enough to stake 30k accounts in a reasonable time.
 
-`smoldot` for my (limited) tests on WAH seems to be by far the best solution in this approach. Probably another alternative would be to rely on a local node but the tool today only supports smoldot and not RPC connection. It's trival to add if you want to experiment with that.
+`smoldot` for my (limited) tests vs staking on WAH and for my (extensive) test on Paseo for account creation  seems to be by far the best solution for our use-case. Probably another alternative would be to rely on a local node but the tool today only supports `smoldot` and not RPC connection. It's trivial to add if you want to experiment with that.
 
 ## Let's start
 
-As mentioned early, we want to let each of the accounts in [this list](paseo_fake_nominators.txt) to bond and nominate so accounts from ///43 to ///30042.
+As mentioned early, we want to let each of the accounts in [this list](paseo_fake_nominators.txt) to bond and nominate for accounts from `///43` to `///30042` derived from the usual test account `14iw76ZmY7BzFfBYrTrCnMyAzU5X4LY5jCFN6XuSnTYnzaTe`.
 
-What I would suggest is a gradual approach: let a small bunch of accounts to bond and nominate, check the everything is fine. Increase the size gradually. Repeat. For the creation of accounts, I started with creating 10 then 1000 then 5000 then 10k up to 30k and worked seamlessly. Here risks that something goes wrong is higher and the whole process will also take more time (the creation itself took 2min or so).
+What I would suggest is a gradual approach: let a small bunch of accounts to bond and nominate, check that everything is fine. Increase the size of the batch gradually. Repeat.
+
+For the creation of accounts, I started with creating 10 then 1000 then 5000 then 10k up to 30k and worked seamlessly. Here risks that something goes wrong are much higher and the whole process will also take more time (the creation of 30k itself took 2min or so, just because I was cautious and I did few intermediate steps).
 
 Proposed approach:
 
@@ -116,7 +118,7 @@ bun run index.ts --seed $SEED --network paseo --nominators 100 --no-wait --start
 
 Note that I am proposing to just creating `solo nominators` and not a mix of solo nominators, nom pools and dual staking . Reason is: we can't really create new pools on Paseo (max 16 and we have already 16 there and I suggest not to mess up with existing ones).
 
-The tool is pretty verbose in output (you can use `--quiet` option to make it less verbose but I suggest not to), so you should see step by step what is trying to do and also if something goes wrong (e.g. timeout on request, insufficient funds for a user while staking etc).
+The tool is pretty verbose in output (you could use `--quiet` option to make but I suggest not to), so you should see step by step what is trying to do and also if something goes wrong (e.g. timeout on request, insufficient funds for a user while staking etc, PAPI errors, etc).
 
 Example of output of a dry-run as reference:
 
