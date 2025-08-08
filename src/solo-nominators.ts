@@ -100,10 +100,6 @@ export async function createAccounts(
       // Check batch in parallel with timeout
       const checkPromises = checkBatch.map(async ({ index, address }) => {
         try {
-          if (!quiet) {
-            console.log(`🔍 Checking account ${index}: ${address}...`);
-          }
-
           // Add much shorter timeout for individual account queries (10 seconds per account)
           const accountInfo = await Promise.race([
             api.query.System.Account.getValue(address),
@@ -114,10 +110,6 @@ export async function createAccounts(
               )
             ),
           ]);
-
-          if (!quiet) {
-            console.log(`✅ Account ${index} check completed`);
-          }
 
           const shouldCreate = (accountInfo as any).providers === 0;
           return { index, shouldCreate };
@@ -130,28 +122,39 @@ export async function createAccounts(
       const results = await Promise.all(checkPromises);
 
       // Store results and collect available indices
+      let foundInBatch = 0;
+      let skippedInBatch = 0;
+
       for (const { index, shouldCreate } of results) {
         accountStatuses.set(index, shouldCreate);
         if (shouldCreate) {
           availableIndices.push(index);
-          if (!quiet) {
-            console.log(`   ✅ Found available index: ${index}`);
-          }
+          foundInBatch++;
         } else {
           skippedCount++;
-          if (!quiet) {
-            console.log(`   ⏭️  Index ${index} already exists, skipping`);
-          }
+          skippedInBatch++;
         }
+      }
+
+      // Only show batch summary
+      if (!quiet && (foundInBatch > 0 || skippedInBatch > 0)) {
+        console.log(`   📊 Batch checked: ${foundInBatch} available, ${skippedInBatch} existing`);
       }
 
       // Move to next batch
       currentCheckIndex = batchEndIndex;
 
-      // Show progress
-      if (!quiet && availableIndices.length > 0) {
+      // Show progress every 10% or when complete
+      const progressPercent = Math.floor((availableIndices.length / targetCount) * 10) * 10;
+      const lastProgressPercent =
+        Math.floor(((availableIndices.length - foundInBatch) / targetCount) * 10) * 10;
+
+      if (
+        !quiet &&
+        (progressPercent > lastProgressPercent || availableIndices.length >= targetCount)
+      ) {
         console.log(
-          `   📊 Progress: Found ${availableIndices.length}/${targetCount} available indices`
+          `   ✅ Progress: Found ${availableIndices.length}/${targetCount} available indices (checked ${totalChecked} total)`
         );
       }
     }
@@ -185,10 +188,8 @@ export async function createAccounts(
   let processedIndices = 0;
 
   while (processedIndices < availableIndices.length) {
-    if (!quiet) {
-      console.log(`🔄 Creating batch ${Math.floor(processedIndices / transferBatchSize) + 1}...`);
-    }
     const batch = [];
+    const batchStartIndex = processedIndices;
 
     // Build batch of transfers using available indices
     const batchEndIndex = Math.min(processedIndices + transferBatchSize, availableIndices.length);
@@ -209,11 +210,6 @@ export async function createAccounts(
 
       // Fund with exact stake amount + fixed buffer
       const fundingAmount = stakeAmount + fixedBufferPerAccount;
-      if (!quiet) {
-        console.log(
-          `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(tokenUnit)} ${tokenSymbol} (stake: ${Number(stakeAmount) / Number(tokenUnit)} ${tokenSymbol})`
-        );
-      }
 
       // Use transfer_allow_death for creating new accounts
       const transfer = api.tx.Balances.transfer_allow_death({
@@ -235,11 +231,23 @@ export async function createAccounts(
     // Execute batch if we have transfers
     if (batch.length > 0) {
       if (isDryRun) {
-        console.log(`\n🔍 DRY RUN: Would execute batch of ${batch.length} transfers`);
+        if (!quiet) {
+          const indices = availableIndices.slice(batchStartIndex, batchEndIndex);
+          const indicesToShow =
+            indices.length > 5
+              ? `${indices.slice(0, 5).join(", ")}... (${indices.length} total)`
+              : indices.join(", ");
+          console.log(`\n🔍 DRY RUN: Would create accounts at indices: ${indicesToShow}`);
+        }
       } else {
         if (!quiet) {
+          const indices = availableIndices.slice(batchStartIndex, batchEndIndex);
+          const indicesToShow =
+            indices.length > 5
+              ? `${indices.slice(0, 5).join(", ")}... (${indices.length} total)`
+              : indices.join(", ");
           console.log(
-            `\n⚡ Executing batch of ${batch.length} transfers (${createdCount}/${targetCount} new accounts created so far)...`
+            `\n⚡ Creating batch of ${batch.length} accounts at indices: ${indicesToShow}`
           );
         }
 
