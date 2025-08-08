@@ -99,7 +99,7 @@ I have experimented with a single remote RPC and I couldn't really batch stuff w
 
 As mentioned early, we want to let each of the accounts in [this list](paseo_fake_nominators.txt) to bond and nominate for accounts from `///43` to `///30042` derived from the usual test account `14iw76ZmY7BzFfBYrTrCnMyAzU5X4LY5jCFN6XuSnTYnzaTe`.
 
-What I would suggest is a gradual approach: let a small bunch of accounts to bond and nominate, check that everything is fine. Increase the size of the batch gradually. Repeat.
+What I would suggest is a gradual approach: let a small bunch of accounts to bond and nominate, check that everything is fine. Increase the size of the batch gradually, potentially extending how many batches in parallel we deal with. Repeat.
 
 For the creation of accounts, I started with creating 10 then 1000 then 5000 then 10k up to 30k and worked seamlessly. Here risks that something goes wrong are much higher and the whole process will also take more time (the creation of 30k itself took 2min or so, just because I was cautious and I did few intermediate steps).
 
@@ -112,10 +112,16 @@ bun run index.ts --seed $SEED --network paseo --nominators 10 --no-wait --start-
 # 📌 Next validator index for future batches: 10
 # and use the index in the following command as start validator index for round-robin validator selection via `--validator-start-index` e.g.
 bun run index.ts --seed $SEED --network paseo --nominators 100 --no-wait --start-index 53 --skip-check-account --stake-only --validator-start-index 110
-# check everything is good. If yes, try with 500 nominators. Again, look at next validator index as printed out in the last line of the script and use it as `--validator-start-index`. Note that you can know the index in advance if you run the command with --dry-run as option before the `real` one.
+# check everything is good. If yes, try with 500 nominators. Again, look at next validator index as printed out in the last line of the script and use it as `--validator-start-index`. Note that you can know the index in advance if you run the command with --dry-run as option before the `real` one. I would suggest at this point to try also `--parallel-batches` (default 1, max 10)
 bun run index.ts --seed $SEED --network paseo --nominators 100 --no-wait --start-index 153 --skip-check-account --stake-only  --validator-start-index 60
 # scale up more if you , updating start-index. Try to bond and nominate up to 30042
 ```
+Some comments on the parameters on the commands above (look at [solo_nominators](src/solo-nominators.ts) for more details):
+
+- `--no-wait`: fire and forget mode -> no waiting for transaction inclusion. Use it for max throughput, we are probably fine w/o confirmation. Without `--no-wait` (default), we wait for inclusion so we call `signSubmitAndWatch` (potentially in parallel depending on `--parallel-batches`).
+- `--stake-batch`: controls how many accounts are processed per batch (default: 100, you can specify more, currently up to 250)
+- `--parallel-batches`: controls concurrent transaction submissions (default: 1, max : 10). We could potentially try with more than the default. If we combined  `--no-wait` with `--parallel-batches` > 1, transactions are chunked and submitted in parallel using `Promise.allSettled()`
+- `--skip-check-account`: skip check entirely on staking / bonding. I would suggest to have it since we have created these accounts with enough funds to bond and nominate so no point in wasting time to check if the criteria are satisfied or not
 
 Note that I am proposing to just creating `solo nominators` and not a mix of solo nominators, nom pools and dual staking . Reason is: we can't really create new pools on Paseo (max 16 and we have already 16 there and I suggest not to mess up with existing ones).
 
