@@ -127,10 +127,10 @@ export async function createAccounts(
 
       for (const { index, shouldCreate } of results) {
         accountStatuses.set(index, shouldCreate);
-        if (shouldCreate) {
+        if (shouldCreate && availableIndices.length < targetCount) {
           availableIndices.push(index);
           foundInBatch++;
-        } else {
+        } else if (!shouldCreate) {
           skippedCount++;
           skippedInBatch++;
         }
@@ -171,7 +171,7 @@ export async function createAccounts(
       }
     } else {
       if (!quiet) {
-        console.log(`   ✅ Found all ${availableIndices.length} required account indices`);
+        console.log(`   ✅ Found ${availableIndices.length} required account indices`);
       }
     }
   }
