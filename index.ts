@@ -186,7 +186,8 @@ async function main() {
       // Execute topup mode
       const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
         godSeed,
-        network
+        network,
+        isDryRun
       );
       try {
         const networkConfig = getNetworkConfig(network);
@@ -212,7 +213,8 @@ async function main() {
 
       const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
         godSeed,
-        network
+        network,
+        isDryRun
       );
       try {
         let createdPoolIds: number[] = [];
@@ -420,7 +422,8 @@ async function main() {
       // Execute solo nominator mode
       const { api, godSigner, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
         godSeed,
-        network
+        network,
+        isDryRun
       );
       try {
         // Get network configuration for token symbol

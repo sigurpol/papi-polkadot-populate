@@ -21,7 +21,7 @@ export async function destroyPools(
   console.log(`   - Pools to destroy: ${poolIds.join(", ")}`);
   console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
 
-  const { api, derive, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, smoldot, client } = await setupApiAndConnection(godSeed, network, isDryRun);
 
   try {
     const results = {
@@ -210,7 +210,11 @@ export async function destroyPools(
 
 export async function listPools(godSeed: string, network: string) {
   console.log("🚀 Starting PAPI Polkadot Populate - LIST POOLS MODE");
-  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
+    godSeed,
+    network,
+    false
+  );
   const networkConfig = getNetworkConfig(network);
 
   try {
@@ -397,7 +401,11 @@ export async function removeFromPool(
   );
   console.log(`   - Mode: ${isDryRun ? "DRY RUN" : "EXECUTE (Real transactions!)"}`);
 
-  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
+    godSeed,
+    network,
+    isDryRun
+  );
   const networkConfig = getNetworkConfig(network);
 
   try {

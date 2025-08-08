@@ -7,10 +7,16 @@ import { getNetworkConfig, getTokenUnit } from "./network-config.js";
 // Types are used in return type annotations below
 
 // Common setup function for API connection
-export async function setupApiAndConnection(godSeed: string, network: string) {
+export async function setupApiAndConnection(
+  godSeed: string,
+  network: string,
+  isDryRun: boolean = false
+) {
   const networkConfig = getNetworkConfig(network);
-  console.log(`⚠️  WARNING: This will execute REAL transactions on ${network} network!`);
-  console.log("   Use --dry-run flag to test without executing transactions");
+  if (!isDryRun) {
+    console.log(`⚠️  WARNING: This will execute REAL transactions on ${network} network!`);
+    console.log("   Use --dry-run flag to test without executing transactions");
+  }
 
   // Validate and process god account seed
   const { derive, godKeyPair, godSigner } = validateAndProcessSeed(godSeed);

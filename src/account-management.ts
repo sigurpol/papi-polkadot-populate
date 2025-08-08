@@ -160,7 +160,11 @@ export async function listAccounts(godSeed: string, fastMode = false, network: s
     `📋 Listing all derived accounts created by this tool${fastMode ? " (fast mode - no staking info)" : ""}...\n`
   );
 
-  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
+    godSeed,
+    network,
+    false
+  );
   const networkConfig = getNetworkConfig(network);
 
   try {
@@ -267,7 +271,11 @@ export async function unbondAccounts(
     `🔓 ${isDryRun ? "DRY RUN: " : ""}Unbonding ${accountIndices.length} account(s) and returning funds to god account...\n`
   );
 
-  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(godSeed, network);
+  const { api, derive, tokenUnit, smoldot, client } = await setupApiAndConnection(
+    godSeed,
+    network,
+    isDryRun
+  );
   const networkConfig = getNetworkConfig(network);
 
   try {

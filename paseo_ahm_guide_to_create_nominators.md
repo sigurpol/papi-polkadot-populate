@@ -15,7 +15,7 @@ cd papi-polkadot-populate
 bun install
 ```
 
-Test the everything works fine via 
+Test the everything works fine via
 
 ```bash
 bun run index.ts --help
@@ -69,10 +69,10 @@ You should have received the seed of the test account `14iw76ZmY7BzFfBYrTrCnMyAz
 
 Each command supports the `--dry-run` option, which shows what the tool would do w/o actually submitting anything. It's very fast and give you a basic confidence on what the tool will perform for real.
 
-# [Optional - You can skip it] Test Creation and Staking of accounts on WAH 
+# [Optional - You can skip it] Test Creation and Staking of accounts on WAH
 
-30k accounts are already pre-created via the tool on `Paseo`. 
-**NOT NEEDED in order to have these 30k accounts on Paseo as nominators** but  if you want to experiment with the tool before trying directly on Paseo after RU and before AHM,  I suggest you to try on `Westend Asset Hub`.
+30k accounts are already pre-created via the tool on `Paseo`.
+**NOT NEEDED in order to have these 30k accounts on Paseo as nominators** but if you want to experiment with the tool before trying directly on Paseo after RU and before AHM, I suggest you to try on `Westend Asset Hub`.
 Don't use the same seed of `14iw76ZmY7BzFfBYrTrCnMyAzU5X4LY5jCFN6XuSnTYnzaTe` since I've already played on WAH with it, just use maybe your own test account on WAH if properly funded (requirements are low in any case for Westend, faucet will suffice for few nominators to be created)
 
 ```bash
@@ -87,12 +87,13 @@ If you feel adventurous, you can experiment with all the options described in th
 # Staking 30k accounts on Paseo
 
 ## Smoldot for the win, I hope...
+
 Enough with the experiments, back to the core point of this document: let these 30k nominate!
-Now, the creation of 30k via the script was a breeze and blazingly fast because it was easy to group and parallelize transactions coming all from the same base account. For staking, we have 30k accounts  and each of them needs to submit a request to bond and nominate so optimization is harder.
+Now, the creation of 30k via the script was a breeze and blazingly fast because it was easy to group and parallelize transactions coming all from the same base account. For staking, we have 30k accounts and each of them needs to submit a request to bond and nominate so optimization is harder.
 
 I have experimented with a single remote RPC and I couldn't really batch stuff without hitting severe rate limiting. Same with a list of round-robin RPC nodes, still not enough to stake 30k accounts in a reasonable time.
 
-`smoldot` for my (limited) tests vs staking on WAH and for my (extensive) test on Paseo for account creation  seems to be by far the best solution for our use-case. Probably another alternative would be to rely on a local node but the tool today only supports `smoldot` and not RPC connection. It's trivial to add if you want to experiment with that.
+`smoldot` for my (limited) tests vs staking on WAH and for my (extensive) test on Paseo for account creation seems to be by far the best solution for our use-case. Probably another alternative would be to rely on a local node but the tool today only supports `smoldot` and not RPC connection. It's trivial to add if you want to experiment with that.
 
 ## Let's start
 
@@ -105,8 +106,8 @@ For the creation of accounts, I started with creating 10 then 1000 then 5000 the
 Proposed approach:
 
 ```bash
-# $SEED must contain the seed of 14iw76ZmY7BzFfBYrTrCnMyAzU5X4LY5jCFN6XuSnTYnzaTe 
-bun run index.ts --seed $SEED --network paseo --nominators 10 --no-wait --start-index 43 --skip-check-account --stake-only 
+# $SEED must contain the seed of 14iw76ZmY7BzFfBYrTrCnMyAzU5X4LY5jCFN6XuSnTYnzaTe
+bun run index.ts --seed $SEED --network paseo --nominators 10 --no-wait --start-index 43 --skip-check-account --stake-only
 # check everything is good. Check also on https://paseo.subscan.io/account. If yes try with 100 nominators. If you want to enforce even distribution take note of the index printed as last line by the script e.g. 10 in the example below:
 # 📌 Next validator index for future batches: 10
 # and use the index in the following command as start validator index for round-robin validator selection via `--validator-start-index` e.g.
@@ -185,29 +186,30 @@ bun run index.ts --seed $SEED --network paseo --nominators 10 --no-wait --start-
 As mentioned, the tool is pretty verbose so you should see clearly an error and where things went 🍌.
 
 When it comes to staking, these files you should look at:
+
 1.  [index.ts](index.ts) - the entry point of everything. In particular go to line 477 where stake-only handling starts and where we call `stakeAndNominate` function
-2. [src/solo-nominators.ts](src/solo-nominators.ts) where `stakeAndNominate` function is implemented, in particular the core log is here:
+2.  [src/solo-nominators.ts](src/solo-nominators.ts) where `stakeAndNominate` function is implemented, in particular the core log is here:
 
 ```typescript
-        // Create bond and nominate transactions
-        const bondTx = api.tx.Staking.bond({
-          value: stakeAmount,
-          payee: { type: "Staked", value: undefined },
-        });
+// Create bond and nominate transactions
+const bondTx = api.tx.Staking.bond({
+  value: stakeAmount,
+  payee: { type: "Staked", value: undefined },
+});
 
-        // Convert SS58String[] to MultiAddress[] explicitly for nominate
-        const validatorTargets = selectedValidators.map((validator) => MultiAddress.Id(validator));
-        const nominateTx = api.tx.Staking.nominate({ targets: validatorTargets });
+// Convert SS58String[] to MultiAddress[] explicitly for nominate
+const validatorTargets = selectedValidators.map((validator) => MultiAddress.Id(validator));
+const nominateTx = api.tx.Staking.nominate({ targets: validatorTargets });
 
-        // Batch bond and nominate together
-        const batchTx = api.tx.Utility.batch_all({
-          calls: [bondTx.decodedCall, nominateTx.decodedCall],
-        });
-        batch.push({ tx: batchTx, signer: account.signer });
+// Batch bond and nominate together
+const batchTx = api.tx.Utility.batch_all({
+  calls: [bondTx.decodedCall, nominateTx.decodedCall],
+});
+batch.push({ tx: batchTx, signer: account.signer });
 
-        stakedCount++;
+stakedCount++;
 ```
 
-In case of timeout, you might want to play with `--no-wait` option (faster) or without (default, slower but safer) and increase the timeout. Or if you experience issue with --nominators X with X > 100 or 1000, just try to be more conservative and try with small batches. 
+In case of timeout, you might want to play with `--no-wait` option (faster) or without (default, slower but safer) and increase the timeout. Or if you experience issue with --nominators X with X > 100 or 1000, just try to be more conservative and try with small batches.
 
 Good luck!
