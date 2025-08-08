@@ -10,7 +10,7 @@ export interface BatchSizes {
 const DEFAULT_BATCH_SIZES: BatchSizes = {
   transfers: 1000, // Simple balance transfers
   staking: 100, // Complex operations (bond + nominate)
-  checkBatch: 500, // Parallel account existence checks
+  checkBatch: 50, // Parallel account existence checks (conservative for smoldot)
 };
 
 /**
@@ -54,7 +54,7 @@ export async function getOptimalBatchSizes(
     const calculatedSizes: BatchSizes = {
       transfers: Math.min(1500, Math.max(500, maxTransfers)),
       staking: Math.min(250, Math.max(25, maxStaking)),
-      checkBatch: 500, // Not affected by block weight
+      checkBatch: 50, // Conservative for smoldot connections
     };
 
     console.log(`📊 Calculated batch sizes from chain constants:`);

@@ -21,7 +21,7 @@ export async function createAccounts(
   isDryRun: boolean,
   batchSize?: number,
   startIndex = 1,
-  checkBatchSize = 500,
+  checkBatchSize = 50,
   noWait = false,
   _parallelBatches = 1,
   quiet = false,
@@ -90,11 +90,34 @@ export async function createAccounts(
         Math.min(i + checkBatchSize, accountsToCheck.length)
       );
 
-      // Check batch in parallel
+      // Check batch in parallel with timeout
       const checkPromises = checkBatch.map(async ({ index, address }) => {
-        const accountInfo = await api.query.System.Account.getValue(address);
-        const shouldCreate = accountInfo.providers === 0;
-        return { index, shouldCreate };
+        try {
+          if (!quiet) {
+            console.log(`🔍 Checking account ${index}: ${address}...`);
+          }
+
+          // Add much shorter timeout for individual account queries (10 seconds per account)
+          const accountInfo = await Promise.race([
+            api.query.System.Account.getValue(address),
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error(`Account query timeout after 10s for ${address}`)),
+                10000
+              )
+            ),
+          ]);
+
+          if (!quiet) {
+            console.log(`✅ Account ${index} check completed`);
+          }
+
+          const shouldCreate = (accountInfo as any).providers === 0;
+          return { index, shouldCreate };
+        } catch (error) {
+          console.warn(`⚠️  Account ${address} check failed: ${error}. Assuming needs creation.`);
+          return { index, shouldCreate: true };
+        }
       });
 
       const results = await Promise.all(checkPromises);
@@ -119,6 +142,9 @@ export async function createAccounts(
   }
 
   // Now create accounts using the pre-determined statuses
+  if (!quiet) {
+    console.log(`\n📝 Starting account creation phase...`);
+  }
   accountIndex = startIndex;
 
   while (createdCount < targetCount) {
@@ -145,6 +171,7 @@ export async function createAccounts(
           console.log(
             `   [${accountIndex}] Creating ${account.address} with ${Number(fundingAmount) / Number(tokenUnit)} ${tokenSymbol} (stake: ${Number(stakeAmount) / Number(tokenUnit)} ${tokenSymbol})`
           );
+          console.log(`🔄 Building transfer transaction...`);
         }
         // Use transfer_allow_death for creating new accounts
         const transfer = api.tx.Balances.transfer_allow_death({
@@ -349,8 +376,14 @@ export async function stakeAndNominate(
     }
   }
 
-  // First, get the list of all validators
-  const validatorEntries = await api.query.Staking.Validators.getEntries();
+  // First, get the list of all validators with timeout
+  console.log(`🔍 Querying validators...`);
+  const validatorEntries = await Promise.race([
+    api.query.Staking.Validators.getEntries(),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error("Validator query timeout after 15 seconds")), 15000)
+    ),
+  ]);
   const allValidators: SS58String[] = validatorEntries.map(
     ({ keyArgs: [validator] }: { keyArgs: [SS58String] }) => validator
   );
